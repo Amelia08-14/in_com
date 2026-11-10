@@ -9,7 +9,7 @@ import { ToastProvider } from '@/components/ui';
 import { api, getToken, getUser, logout, User, fmtDate } from '@/lib/api';
 import { NAV } from '@/lib/nav';
 import { ROLE_LABELS } from '@/lib/labels';
-import './espace.css';
+import '../espace.css';
 
 function Bell() {
   const [open, setOpen] = useState(false);
@@ -27,7 +27,7 @@ function Bell() {
         <div className="notif-panel">
           {items.length === 0 && <div className="n">Aucune notification</div>}
           {items.map((n) => (
-            <Link key={n.id} href={n.link || '/espace'} className={n.read_at ? '' : 'unread'} onClick={() => setOpen(false)}>
+            <Link key={n.id} href={n.link || '/dashboard'} className={n.read_at ? '' : 'unread'} onClick={() => setOpen(false)}>
               {n.message}<small>{fmtDate(n.created_at, true)}</small>
             </Link>
           ))}
@@ -43,7 +43,7 @@ export default function EspaceLayout({ children }: { children: React.ReactNode }
   const [me, setMe] = useState<User | null>(null);
 
   useEffect(() => {
-    if (!getToken()) { router.replace('/connexion'); return; }
+    if (!getToken()) { router.replace('/dashboard/connexion'); return; }
     setMe(getUser());
     api('/auth/me').then(setMe).catch(() => {});
   }, [router]);
@@ -61,7 +61,7 @@ export default function EspaceLayout({ children }: { children: React.ReactNode }
             <div className="who"><b>{me.name}</b><span>{ROLE_LABELS[me.role]}</span></div>
             <nav>
               {nav.map((n) => {
-                const on = n.href === '/espace' ? path === '/espace' : path.startsWith(n.href);
+                const on = n.href === '/dashboard' ? path === '/dashboard' : path.startsWith(n.href);
                 return (
                   <Link key={n.href} href={n.href} className={on ? 'on' : ''}>
                     <svg viewBox="0 0 24 24"><path d={n.icon} /></svg>{n.label}

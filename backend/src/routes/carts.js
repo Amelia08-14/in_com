@@ -97,7 +97,7 @@ pub.post('/public/carts', wrap(async (req, res) => {
   await q("INSERT INTO cart_events (cart_id, status, note) VALUES (?, 'recue', 'Panier envoyé depuis le site')", [r.insertId]);
   await q('INSERT INTO contact_requests (name, company, phone, email, offer, message, prospect_id) VALUES (?,?,?,?,?,?,?)',
     [name, company, phone, email, offer ? offer.ref : 'panier', `Panier ${code} : ${items.map((i) => i.label).join(', ')}${message ? `\n${message}` : ''}`, p.insertId]);
-  await notifyRole(['commercial_sedentaire', 'responsable_commercial'], `Nouveau panier ${code} : ${company || name}`, '/espace/paniers');
+  await notifyRole(['commercial_sedentaire', 'responsable_commercial'], `Nouveau panier ${code} : ${company || name}`, '/dashboard/paniers');
   res.json({ code });
 }));
 
@@ -156,7 +156,7 @@ crm.post('/carts/:id/assign', allow('admin', 'responsable_commercial'), wrap(asy
   if (!u) throw new HttpError(400, 'Commercial invalide');
   const c = await one('SELECT code FROM carts WHERE id=?', [req.params.id]);
   await q('UPDATE carts SET assigned_to=? WHERE id=?', [u.id, req.params.id]);
-  await notify(u.id, `Panier ${c.code} vous est attribué`, '/espace/paniers');
+  await notify(u.id, `Panier ${c.code} vous est attribué`, '/dashboard/paniers');
   res.json({ ok: true });
 }));
 

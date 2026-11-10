@@ -74,7 +74,7 @@ async function checkLateAlerts() {
   for (const r of rows) {
     const msg = `Retard cumulé ≥ 3 jours pour ${r.name} (${r.late} tâches)`;
     const exists = await one('SELECT id FROM notifications WHERE message=? AND DATE(created_at)=CURDATE()', [msg]);
-    if (!exists) await notifyRole('responsable_technique', msg, '/espace/equipe-gd');
+    if (!exists) await notifyRole('responsable_technique', msg, '/dashboard/equipe-gd');
   }
 }
 
@@ -127,7 +127,7 @@ router.post('/', allow('responsable_technique', 'responsable_communication'), wr
   const r = await q('INSERT INTO tasks (prospect_id, assigned_to, type, theme, brief, priority, due_date) VALUES (?,?,?,?,?,?,?)',
     [prospect_id, assigned_to, type, theme, brief, priority, due_date || ymd()]);
   await log(r.insertId, req.user.id, 'creation_manuelle', 'a_faire');
-  await notify(assigned_to, `Nouvelle tâche : ${theme || type}`, '/espace/taches');
+  await notify(assigned_to, `Nouvelle tâche : ${theme || type}`, '/dashboard/taches');
   res.json({ id: r.insertId });
 }));
 
@@ -160,7 +160,7 @@ router.post('/:id/submit', wrap(async (req, res) => {
   await q("UPDATE tasks SET status='validation_technique', completed_at=NOW() WHERE id=?", [t.id]);
   // Ligne de reporting automatique : création ou modification
   await log(t.id, req.user.id, t.part === 'modification' ? 'modification' : 'creation', 'validation_technique', comment);
-  await notifyRole('responsable_technique', `Nouvelle conception à valider : ${t.client_name} (V${v.n})`, '/espace/validation');
+  await notifyRole('responsable_technique', `Nouvelle conception à valider : ${t.client_name} (V${v.n})`, '/dashboard/validation');
   res.json({ ok: true, version: v.n });
 }));
 
@@ -168,7 +168,7 @@ async function sendToModification(t, userId, note, by) {
   if (!note) throw new HttpError(400, 'Note obligatoire');
   await q("UPDATE tasks SET status='modification_demandee', part='modification', modif_count=modif_count+1, last_note=?, due_date=CURDATE(), completed_at=NULL WHERE id=?", [note, t.id]);
   await log(t.id, userId, `refus_${by}`, 'modification_demandee', note);
-  await notify(t.assigned_to, `Modification à faire (${t.client_name}) : ${note}`, '/espace/taches');
+  await notify(t.assigned_to, `Modification à faire (${t.client_name}) : ${note}`, '/dashboard/taches');
 }
 
 // Responsable technique : validation interne
@@ -180,7 +180,7 @@ router.post('/:id/tech-review', allow('responsable_technique'), wrap(async (req,
     await q("UPDATE tasks SET status='validation_client' WHERE id=?", [t.id]);
     await log(t.id, req.user.id, 'validation_technique', 'validation_client', req.body.note);
     const ccs = await q("SELECT user_id FROM client_assignments WHERE prospect_id=? AND role='charge_clientele'", [t.prospect_id]);
-    await notify([...ccs.map((c) => c.user_id), t.client_user_id], `Conception prête pour validation : ${t.client_name}`, '/espace/validation');
+    await notify([...ccs.map((c) => c.user_id), t.client_user_id], `Conception prête pour validation : ${t.client_name}`, '/dashboard/validation');
   } else {
     await sendToModification(t, req.user.id, req.body.note, 'technique');
   }
@@ -195,9 +195,9 @@ router.post('/:id/client-review', allow('charge_clientele', 'client'), wrap(asyn
   if (req.body.decision === 'valider') {
     await q("UPDATE tasks SET status='validee' WHERE id=?", [t.id]);
     await log(t.id, req.user.id, 'validation_client', 'validee', req.body.note);
-    await notify(t.assigned_to, `Bravo, conception validée ! (${t.client_name})`, '/espace/taches');
+    await notify(t.assigned_to, `Bravo, conception validée ! (${t.client_name})`, '/dashboard/taches');
     const cms = await q("SELECT user_id FROM client_assignments WHERE prospect_id=? AND role='community_manager'", [t.prospect_id]);
-    await notify(cms.map((c) => c.user_id), `Contenu validé à programmer : ${t.client_name}`, '/espace/validation');
+    await notify(cms.map((c) => c.user_id), `Contenu validé à programmer : ${t.client_name}`, '/dashboard/validation');
   } else {
     await sendToModification(t, req.user.id, req.body.note, req.user.role === 'client' ? 'client' : 'cc');
   }
@@ -220,7 +220,7 @@ router.post('/:id/reassign', allow('responsable_technique'), wrap(async (req, re
   if (!user_id || Number(user_id) === t.assigned_to) throw new HttpError(400, 'Choisir un autre graphiste');
   await q('UPDATE tasks SET assigned_to=?, reassigned_from=? WHERE id=?', [user_id, t.assigned_to, t.id]);
   await log(t.id, req.user.id, 'reattribution', t.status, `De ${t.assigned_to} vers ${user_id}`);
-  await notify(user_id, `Tâche réattribuée : ${t.theme || t.client_name}`, '/espace/taches');
+  await notify(user_id, `Tâche réattribuée : ${t.theme || t.client_name}`, '/dashboard/taches');
   res.json({ ok: true });
 }));
 
@@ -304,7 +304,7 @@ router.post('/clients/:id/assign', allow('responsable_technique', 'responsable_c
   if (role === 'graphiste') await q("DELETE FROM client_assignments WHERE prospect_id=? AND role='graphiste'", [req.params.id]);
   await q('INSERT IGNORE INTO client_assignments (prospect_id, user_id, role, assigned_by) VALUES (?,?,?,?)', [req.params.id, user_id, role, req.user.id]);
   await q("UPDATE tasks SET assigned_to=? WHERE prospect_id=? AND status IN (?) AND ? = 'graphiste'", [user_id, req.params.id, OPEN, role]);
-  await notify(user_id, 'Un nouveau client vous a été attribué', '/espace/clients');
+  await notify(user_id, 'Un nouveau client vous a été attribué', '/dashboard/clients');
   res.json({ ok: true });
 }));
 

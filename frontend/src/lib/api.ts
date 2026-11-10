@@ -19,7 +19,7 @@ export function getUser(): User | null {
 export function logout() {
   localStorage.removeItem('incom_token');
   localStorage.removeItem('incom_user');
-  window.location.href = '/connexion';
+  window.location.href = '/dashboard/connexion';
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

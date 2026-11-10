@@ -48,7 +48,7 @@ router.post('/:id/confirm-payment', allow('responsable_communication'), wrap(asy
   if (d.status !== 'signe') throw new HttpError(400, 'Le dossier doit être au statut Signé');
   await q("UPDATE dossiers SET status='paiement_confirme', payment_confirmed_at=NOW(), amount=COALESCE(?, amount) WHERE id=?", [req.body.amount || null, d.id]);
   await log(d.id, req.user.id, 'paiement_confirme', req.body.note);
-  if (d.signed_by) await notify(d.signed_by, `Paiement confirmé pour ${d.client_name}`, '/espace/dossiers');
+  if (d.signed_by) await notify(d.signed_by, `Paiement confirmé pour ${d.client_name}`, '/dashboard/dossiers');
   res.json({ ok: true });
 }));
 
@@ -60,11 +60,11 @@ router.post('/:id/assign', allow('responsable_communication'), wrap(async (req, 
   if (cc_id) {
     await q('UPDATE dossiers SET cc_id=? WHERE id=?', [cc_id, d.id]);
     await q('INSERT IGNORE INTO client_assignments (prospect_id, user_id, role, assigned_by) VALUES (?,?,?,?)', [d.prospect_id, cc_id, 'charge_clientele', req.user.id]);
-    await notify(cc_id, `Nouveau client attribué : ${d.client_name} — premier contact sous 24h`, '/espace/dossiers');
+    await notify(cc_id, `Nouveau client attribué : ${d.client_name} — premier contact sous 24h`, '/dashboard/dossiers');
   }
   for (const m of team) {
     await q('INSERT IGNORE INTO client_assignments (prospect_id, user_id, role, assigned_by) VALUES (?,?,?,?)', [d.prospect_id, m.user_id, m.role, req.user.id]);
-    await notify(m.user_id, `Vous intervenez sur ${d.client_name}`, '/espace/taches');
+    await notify(m.user_id, `Vous intervenez sur ${d.client_name}`, '/dashboard/taches');
   }
   if (service_type) await q('UPDATE dossiers SET service_type=? WHERE id=?', [service_type, d.id]);
   if (d.status === 'paiement_confirme') {
@@ -80,7 +80,7 @@ router.post('/:id/submit', allow('charge_clientele', 'responsable_communication'
   if (!['creation_en_cours', 'modification_demandee'].includes(d.status)) throw new HttpError(400, 'Rien à présenter');
   await q("UPDATE dossiers SET status='en_attente_validation', validated_at=NULL, next_followup=DATE_ADD(CURDATE(), INTERVAL 2 DAY) WHERE id=?", [d.id]);
   await log(d.id, req.user.id, 'en_attente_validation', req.body.note);
-  if (d.client_user_id) await notify(d.client_user_id, `Un livrable vous attend pour validation : ${d.title}`, '/espace/projets');
+  if (d.client_user_id) await notify(d.client_user_id, `Un livrable vous attend pour validation : ${d.title}`, '/dashboard/projets');
   res.json({ ok: true });
 }));
 
@@ -94,7 +94,7 @@ router.post('/:id/decision', allow('client', 'charge_clientele'), wrap(async (re
     if (!note) throw new HttpError(400, 'Note obligatoire pour une modification');
     await q("UPDATE dossiers SET status='modification_demandee' WHERE id=?", [d.id]);
     await log(d.id, req.user.id, 'modification_demandee', note);
-    await notify(d.cc_id, `Modification demandée sur ${d.title}`, '/espace/dossiers');
+    await notify(d.cc_id, `Modification demandée sur ${d.title}`, '/dashboard/dossiers');
   } else if (decision === 'valider') {
     if (d.service_type === 'developpement') {
       await q("UPDATE dossiers SET status='livre', validated_at=NOW() WHERE id=?", [d.id]);
@@ -103,10 +103,10 @@ router.post('/:id/decision', allow('client', 'charge_clientele'), wrap(async (re
       await q('UPDATE dossiers SET validated_at=NOW() WHERE id=?', [d.id]);
       await log(d.id, req.user.id, 'valide', 'Validé — transmis au CM pour publication');
       const cms = await q("SELECT user_id FROM client_assignments WHERE prospect_id=? AND role='community_manager'", [d.prospect_id]);
-      if (cms.length) await notify(cms.map((c) => c.user_id), `Contenu validé à publier : ${d.title}`, '/espace/dossiers');
-      else await notifyRole('community_manager', `Contenu validé à publier : ${d.title}`, '/espace/dossiers');
+      if (cms.length) await notify(cms.map((c) => c.user_id), `Contenu validé à publier : ${d.title}`, '/dashboard/dossiers');
+      else await notifyRole('community_manager', `Contenu validé à publier : ${d.title}`, '/dashboard/dossiers');
     }
-    await notifyRole('responsable_communication', `Validation client : ${d.title}`, '/espace/dossiers');
+    await notifyRole('responsable_communication', `Validation client : ${d.title}`, '/dashboard/dossiers');
   } else throw new HttpError(400, 'Décision invalide');
   res.json({ ok: true });
 }));
@@ -117,7 +117,7 @@ router.post('/:id/publish', allow('community_manager', 'responsable_communicatio
   if (!d.validated_at) throw new HttpError(400, 'Le contenu doit être validé par le client');
   await q("UPDATE dossiers SET status='publie' WHERE id=?", [d.id]);
   await log(d.id, req.user.id, 'publie', req.body.note);
-  if (d.client_user_id) await notify(d.client_user_id, `Publié : ${d.title}`, '/espace/projets');
+  if (d.client_user_id) await notify(d.client_user_id, `Publié : ${d.title}`, '/dashboard/projets');
   res.json({ ok: true });
 }));
 

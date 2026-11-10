@@ -18,22 +18,22 @@ const I = {
   inbox: 'M3 13l3-8h12l3 8v6H3zM3 13h5l1 3h6l1-3h5',
 };
 
-const dash: NavItem = { href: '/espace', label: 'Tableau de bord', icon: I.home };
-const univers: NavItem = { href: '/espace/univers', label: 'Univers', icon: I.globe };
-const reporting: NavItem = { href: '/espace/reporting', label: 'Reporting', icon: I.report };
-const deals: NavItem = { href: '/espace/deals', label: 'Deals', icon: I.deal };
-const cal: NavItem = { href: '/espace/calendrier', label: 'Calendrier', icon: I.cal };
-const sav: NavItem = { href: '/espace/sav', label: 'SAV', icon: I.sav };
-const orders: NavItem = { href: '/espace/commandes', label: 'Commandes client', icon: I.cart };
-const dossiers: NavItem = { href: '/espace/dossiers', label: 'Dossiers clients', icon: I.folder };
-const clients: NavItem = { href: '/espace/clients', label: 'Clients & quotas', icon: I.users };
-const tasks: NavItem = { href: '/espace/taches', label: 'Tâches', icon: I.tasks };
-const validation: NavItem = { href: '/espace/validation', label: 'Validation', icon: I.check };
-const gdTeam: NavItem = { href: '/espace/equipe-gd', label: 'Équipe graphistes', icon: I.chart };
-const myStats: NavItem = { href: '/espace/mon-reporting', label: 'Mon reporting', icon: I.chart };
-const usersNav: NavItem = { href: '/espace/utilisateurs', label: 'Utilisateurs', icon: I.team };
-const leads: NavItem = { href: '/espace/demandes', label: 'Demandes du site', icon: I.inbox };
-const carts: NavItem = { href: '/espace/paniers', label: 'Paniers du site', icon: I.cart };
+const dash: NavItem = { href: '/dashboard', label: 'Tableau de bord', icon: I.home };
+const univers: NavItem = { href: '/dashboard/univers', label: 'Univers', icon: I.globe };
+const reporting: NavItem = { href: '/dashboard/reporting', label: 'Reporting', icon: I.report };
+const deals: NavItem = { href: '/dashboard/deals', label: 'Deals', icon: I.deal };
+const cal: NavItem = { href: '/dashboard/calendrier', label: 'Calendrier', icon: I.cal };
+const sav: NavItem = { href: '/dashboard/sav', label: 'SAV', icon: I.sav };
+const orders: NavItem = { href: '/dashboard/commandes', label: 'Commandes client', icon: I.cart };
+const dossiers: NavItem = { href: '/dashboard/dossiers', label: 'Dossiers clients', icon: I.folder };
+const clients: NavItem = { href: '/dashboard/clients', label: 'Clients & quotas', icon: I.users };
+const tasks: NavItem = { href: '/dashboard/taches', label: 'Tâches', icon: I.tasks };
+const validation: NavItem = { href: '/dashboard/validation', label: 'Validation', icon: I.check };
+const gdTeam: NavItem = { href: '/dashboard/equipe-gd', label: 'Équipe graphistes', icon: I.chart };
+const myStats: NavItem = { href: '/dashboard/mon-reporting', label: 'Mon reporting', icon: I.chart };
+const usersNav: NavItem = { href: '/dashboard/utilisateurs', label: 'Utilisateurs', icon: I.team };
+const leads: NavItem = { href: '/dashboard/demandes', label: 'Demandes du site', icon: I.inbox };
+const carts: NavItem = { href: '/dashboard/paniers', label: 'Paniers du site', icon: I.cart };
 
 export const NAV: Record<string, NavItem[]> = {
   admin: [dash, univers, reporting, deals, cal, dossiers, clients, tasks, validation, gdTeam, sav, orders, carts, leads, usersNav],

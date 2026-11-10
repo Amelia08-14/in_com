@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import Logo from '@/components/Logo';
 import { api, setSession, User } from '@/lib/api';
 import { ROLE_LABELS } from '@/lib/labels';
-import '../espace/espace.css';
+import '../espace.css';
 
 // Comptes de démonstration (base locale uniquement — voir backend/src/seed.js)
 const DEMO = [
@@ -28,7 +28,7 @@ export default function Login() {
     try {
       const r = await api<{ token: string; user: User }>('/auth/login', { body: { email, password } });
       setSession(r.token, r.user);
-      router.push('/espace');
+      router.push('/dashboard');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Erreur');
       setBusy(false);

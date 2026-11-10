@@ -108,7 +108,7 @@ async function createDossierFromSignature(prospectId, userId, documentsUrl) {
     [prospectId, p.offer_id, `${p.name} — ${offer ? 'Formule ' + offer.name : 'Prestation'}`, userId, offer ? offer.price_month : 0,
       (await one('SELECT role FROM users WHERE id=?', [userId])).role === 'commercial_terrain' ? 'terrain' : 'bureau']);
   await q("INSERT INTO dossier_history (dossier_id, user_id, status, note) VALUES (?,?, 'signe', 'Signature commerciale')", [r.insertId, userId]);
-  await notifyRole('responsable_communication', `Nouveau dossier signé : ${p.name} — paiement à vérifier`, '/espace/dossiers');
+  await notifyRole('responsable_communication', `Nouveau dossier signé : ${p.name} — paiement à vérifier`, '/dashboard/dossiers');
   return r.insertId;
 }
 
@@ -156,7 +156,7 @@ router.post('/reports', allow('commercial_sedentaire', 'commercial_terrain', 're
   if (reason === 'deal_terrain') {
     const d = await q("INSERT INTO deals (prospect_id, type, created_by, status, notes) VALUES (?, 'terrain', ?, 'a_attribuer', ?)", [pid, u.id, notes || null]);
     await q("INSERT INTO deal_history (deal_id, user_id, action) VALUES (?,?, 'creation')", [d.insertId, u.id]);
-    await notifyRole('responsable_commercial', `Deal terrain à attribuer : ${before.name}`, '/espace/deals');
+    await notifyRole('responsable_commercial', `Deal terrain à attribuer : ${before.name}`, '/dashboard/deals');
     effects.push('Deal terrain créé : transmis au responsable pour attribution');
   }
   if (reason === 'deal_bureau') {
@@ -215,7 +215,7 @@ router.post('/deals/:id/assign', allow('responsable_commercial'), wrap(async (re
   if (!deal) throw new HttpError(404, 'Deal introuvable');
   await q("UPDATE deals SET assigned_to=?, status='attribue' WHERE id=?", [user_id, deal.id]);
   await q("INSERT INTO deal_history (deal_id, user_id, action, detail) VALUES (?,?, 'attribution', ?)", [deal.id, req.user.id, `→ utilisateur ${user_id}`]);
-  await notify(user_id, `Nouveau deal attribué : ${deal.name}`, '/espace/deals');
+  await notify(user_id, `Nouveau deal attribué : ${deal.name}`, '/dashboard/deals');
   res.json({ ok: true });
 }));
 
@@ -251,7 +251,7 @@ router.post('/deals/:id/outcome', allow(...COMMERCIAL), wrap(async (req, res) =>
     [req.user.id, deal.prospect_id, channel, outcome, notes || null, documents_url || null]);
   if (outcome === 'gagne') await createDossierFromSignature(deal.prospect_id, req.user.id, documents_url);
   if (outcome === 'a_relancer' && deal.created_by !== req.user.id) {
-    await notify(deal.created_by, 'Un deal revient chez vous à relancer', '/espace/deals');
+    await notify(deal.created_by, 'Un deal revient chez vous à relancer', '/dashboard/deals');
   }
   res.json({ ok: true });
 }));

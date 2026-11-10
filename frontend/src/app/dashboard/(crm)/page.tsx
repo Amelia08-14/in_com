@@ -7,16 +7,16 @@ import { fmtDate } from '@/lib/api';
 import { DOSSIER_STATUS, ROLE_LABELS } from '@/lib/labels';
 
 const QUICK: Record<string, [string, string][]> = {
-  commercial_sedentaire: [['/espace/reporting?new=1', 'Déclarer un appel'], ['/espace/deals', 'Mes deals'], ['/espace/commandes', 'Commandes à valider']],
-  commercial_terrain: [['/espace/reporting?new=1', 'Déclarer une visite'], ['/espace/calendrier', 'Mes RDV'], ['/espace/univers', 'Mon secteur']],
-  responsable_commercial: [['/espace/deals?status=a_attribuer', 'Attribuer les deals'], ['/espace/reporting', 'Reporting équipe'], ['/espace/demandes', 'Demandes du site']],
-  responsable_communication: [['/espace/dossiers?status=signe', 'Vérifier les paiements'], ['/espace/dossiers', 'Tous les dossiers'], ['/espace/equipe-gd', 'Charge de l’équipe']],
-  responsable_technique: [['/espace/validation', 'Valider les conceptions'], ['/espace/equipe-gd', 'Statistiques équipe'], ['/espace/clients', 'Attribuer les clients']],
-  charge_clientele: [['/espace/validation', 'Présenter aux clients'], ['/espace/dossiers', 'Mes dossiers'], ['/espace/sav', 'SAV']],
-  graphiste: [['/espace/taches', 'Mes tâches du jour'], ['/espace/mon-reporting', 'Ma progression']],
-  community_manager: [['/espace/validation', 'Contenus à publier']],
-  client: [['/espace/validation', 'Valider mes contenus'], ['/espace/commandes', 'Commander un extra'], ['/espace/sav', 'Contacter le support']],
-  recouvrement: [['/espace/commandes', 'Commandes à encaisser']],
+  commercial_sedentaire: [['/dashboard/reporting?new=1', 'Déclarer un appel'], ['/dashboard/deals', 'Mes deals'], ['/dashboard/commandes', 'Commandes à valider']],
+  commercial_terrain: [['/dashboard/reporting?new=1', 'Déclarer une visite'], ['/dashboard/calendrier', 'Mes RDV'], ['/dashboard/univers', 'Mon secteur']],
+  responsable_commercial: [['/dashboard/deals?status=a_attribuer', 'Attribuer les deals'], ['/dashboard/reporting', 'Reporting équipe'], ['/dashboard/demandes', 'Demandes du site']],
+  responsable_communication: [['/dashboard/dossiers?status=signe', 'Vérifier les paiements'], ['/dashboard/dossiers', 'Tous les dossiers'], ['/dashboard/equipe-gd', 'Charge de l’équipe']],
+  responsable_technique: [['/dashboard/validation', 'Valider les conceptions'], ['/dashboard/equipe-gd', 'Statistiques équipe'], ['/dashboard/clients', 'Attribuer les clients']],
+  charge_clientele: [['/dashboard/validation', 'Présenter aux clients'], ['/dashboard/dossiers', 'Mes dossiers'], ['/dashboard/sav', 'SAV']],
+  graphiste: [['/dashboard/taches', 'Mes tâches du jour'], ['/dashboard/mon-reporting', 'Ma progression']],
+  community_manager: [['/dashboard/validation', 'Contenus à publier']],
+  client: [['/dashboard/validation', 'Valider mes contenus'], ['/dashboard/commandes', 'Commander un extra'], ['/dashboard/sav', 'Contacter le support']],
+  recouvrement: [['/dashboard/commandes', 'Commandes à encaisser']],
 };
 
 export default function Dashboard() {
@@ -55,7 +55,7 @@ export default function Dashboard() {
                     <td><b>{d.prospect_name}</b><span className="sub">{d.address}</span></td>
                     <td>{d.kind === 'passage_bureau' ? 'Passage bureau' : d.kind === 'appel' ? 'Appel' : 'RDV terrain'}</td>
                     <td><a href={`tel:${d.phone}`} className="btn btn-ghost btn-xs">{d.phone}</a></td>
-                    <td className="row-actions"><Link href="/espace/calendrier" className="btn btn-dark btn-xs">Donner l’issue</Link></td>
+                    <td className="row-actions"><Link href="/dashboard/calendrier" className="btn btn-dark btn-xs">Donner l’issue</Link></td>
                   </tr>
                 ))}
               </tbody>
@@ -71,7 +71,7 @@ export default function Dashboard() {
             {Object.entries(DOSSIER_STATUS).map(([k, [label]]) => {
               const n = data.pipeline.find((p: any) => p.status === k)?.n || 0;
               return (
-                <Link href={`/espace/dossiers?status=${k}`} key={k} style={{ flex: 1, minWidth: 120 }}>
+                <Link href={`/dashboard/dossiers?status=${k}`} key={k} style={{ flex: 1, minWidth: 120 }}>
                   <span style={{ display: 'block' }} className={n ? 'done' : ''}>
                     <b style={{ display: 'block', fontFamily: 'var(--font-slab)', fontSize: 24, color: 'var(--navy)' }}>{n}</b>{label}
                   </span>

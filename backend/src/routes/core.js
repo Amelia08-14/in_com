@@ -15,7 +15,7 @@ router.post('/public/contact', wrap(async (req, res) => {
   const p = await q("INSERT INTO prospects (name, contact_name, phone, email, source) VALUES (?,?,?,?, 'site')", [company || name, name, phone, email]);
   await q('INSERT INTO contact_requests (name, company, phone, email, offer, message, prospect_id) VALUES (?,?,?,?,?,?,?)',
     [name, company, phone, email, offer, message, p.insertId]);
-  await notifyRole(['commercial_sedentaire', 'responsable_commercial'], `Nouvelle demande via le site : ${company || name}`, '/espace/univers');
+  await notifyRole(['commercial_sedentaire', 'responsable_commercial'], `Nouvelle demande via le site : ${company || name}`, '/dashboard/univers');
   res.json({ ok: true });
 }));
 

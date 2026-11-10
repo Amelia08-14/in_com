@@ -4,7 +4,7 @@ Plateforme IN COMMUNICATION (La Maison IN Groupe) : site vitrine et espace CRM p
 
 | Dossier | Contenu |
 |---|---|
-| `frontend/` | Next.js 15 (App Router, TypeScript) : landing page `/`, connexion `/connexion`, espace `/espace/*` |
+| `frontend/` | Next.js 15 (App Router, TypeScript) : landing page `/`, administration `/dashboard` (connexion `/dashboard/connexion`, CRM `/dashboard/*`) |
 | `backend/` | API Node.js / Express + MySQL (mysql2), auth JWT, règles métier des workflows |
 | `database/schema.sql` | Schéma MySQL 8 |
 | `scripts/` | Démarrage local (MySQL, API, front, Adminer) |

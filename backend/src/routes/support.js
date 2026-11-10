@@ -51,15 +51,15 @@ router.post('/tickets', wrap(async (req, res) => {
   }
   const r = await q('INSERT INTO tickets (prospect_id, department, subject, message, assigned_to, created_by) VALUES (?,?,?,?,?,?)',
     [prospectId, department, subject, message || null, assigned, u.id]);
-  if (assigned) await notify(assigned, `Nouveau ticket SAV : ${subject}`, '/espace/sav');
-  else await notifyRole(DEPT_ROLES[department]?.[0] || 'admin', `Ticket SAV à attribuer : ${subject}`, '/espace/sav');
+  if (assigned) await notify(assigned, `Nouveau ticket SAV : ${subject}`, '/dashboard/sav');
+  else await notifyRole(DEPT_ROLES[department]?.[0] || 'admin', `Ticket SAV à attribuer : ${subject}`, '/dashboard/sav');
   res.json({ id: r.insertId });
 }));
 
 router.post('/tickets/:id/take', allow('commercial_sedentaire', 'responsable_commercial', 'charge_clientele', 'responsable_communication', 'responsable_technique', 'developpeur', 'recouvrement'), wrap(async (req, res) => {
   const assignee = req.body.user_id && req.user.role.startsWith('responsable') ? req.body.user_id : req.user.id;
   await q("UPDATE tickets SET assigned_to=?, status='en_cours' WHERE id=?", [assignee, req.params.id]);
-  if (assignee !== req.user.id) await notify(assignee, 'Un ticket SAV vous a été attribué', '/espace/sav');
+  if (assignee !== req.user.id) await notify(assignee, 'Un ticket SAV vous a été attribué', '/dashboard/sav');
   res.json({ ok: true });
 }));
 
@@ -67,7 +67,7 @@ router.post('/tickets/:id/resolve', wrap(async (req, res) => {
   const t = await one('SELECT t.*, p.client_user_id FROM tickets t JOIN prospects p ON p.id=t.prospect_id WHERE t.id=?', [req.params.id]);
   if (!t) throw new HttpError(404, 'Ticket introuvable');
   await q("UPDATE tickets SET status='resolu' WHERE id=?", [t.id]);
-  if (t.client_user_id) await notify(t.client_user_id, `Ticket résolu : ${t.subject}`, '/espace/sav');
+  if (t.client_user_id) await notify(t.client_user_id, `Ticket résolu : ${t.subject}`, '/dashboard/sav');
   res.json({ ok: true });
 }));
 
@@ -93,7 +93,7 @@ router.post('/orders', allow('client'), wrap(async (req, res) => {
   if (!s) throw new HttpError(400, 'Service invalide');
   const qty = Math.max(1, Number(req.body.quantity) || 1);
   const r = await q('INSERT INTO orders (prospect_id, service_id, quantity, price, note) VALUES (?,?,?,?,?)', [p.id, s.id, qty, s.price * qty, req.body.note || null]);
-  await notifyRole(['commercial_sedentaire', 'responsable_commercial'], `Commande extra : ${p.name} — ${s.name}`, '/espace/commandes');
+  await notifyRole(['commercial_sedentaire', 'responsable_commercial'], `Commande extra : ${p.name} — ${s.name}`, '/dashboard/commandes');
   res.json({ id: r.insertId });
 }));
 
@@ -102,7 +102,7 @@ router.post('/orders/:id/validate', allow('commercial_sedentaire', 'responsable_
   const o = await one('SELECT o.*, p.name FROM orders o JOIN prospects p ON p.id=o.prospect_id WHERE o.id=?', [req.params.id]);
   if (!o || o.status !== 'en_attente') throw new HttpError(400, 'Commande non valide');
   await q("UPDATE orders SET status='recouvrement', validated_by=? WHERE id=?", [req.user.id, o.id]);
-  await notifyRole('recouvrement', `Commande validée, client prêt à payer : ${o.name} (${o.price} DA)`, '/espace/commandes');
+  await notifyRole('recouvrement', `Commande validée, client prêt à payer : ${o.name} (${o.price} DA)`, '/dashboard/commandes');
   res.json({ ok: true });
 }));
 

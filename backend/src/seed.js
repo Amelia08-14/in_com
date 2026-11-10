@@ -194,7 +194,7 @@ const dt = (d) => `${ymd(d)} ${String(d.getHours()).padStart(2, '0')}:00:00`;
 
   await q("INSERT INTO contact_requests (name, company, phone, email, offer, message, prospect_id) VALUES ('Mme Benali', 'Centre Esthétique Belle', '+213 555 00 00 00', 'contact@belle.dz', 'pro', 'Intéressée par la formule Pro.', ?)", [P['Centre Esthétique Belle']]);
 
-  await q("INSERT INTO notifications (user_id, message, link) VALUES (?, 'Bienvenue sur la plateforme IN COM', '/espace')", [U.ceo]);
+  await q("INSERT INTO notifications (user_id, message, link) VALUES (?, 'Bienvenue sur la plateforme IN COM', '/dashboard')", [U.ceo]);
 
   console.log(`Données de démo créées · ${USERS.length} comptes · mot de passe : ${PASSWORD}`);
   await pool.end();
