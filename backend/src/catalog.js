@@ -14,4 +14,13 @@ const SERVICES = [
   ['Campagne spéciale : lancement, promo', 30000], ['Certification de la fiche Google', 5000],
 ];
 
-module.exports = { SECTORS, OFFERS, SERVICES };
+// Secteurs d'activité proposés aux clients (profil de l'espace client)
+const ACTIVITIES = [
+  'Santé et clinique', 'Pharmacie et parapharmacie', 'Beauté et bien-être', 'Restauration et café', 'Hôtellerie et tourisme',
+  'Commerce et boutique', 'Mode et textile', 'Agroalimentaire', 'Immobilier et promotion', 'BTP et construction',
+  'Industrie', 'Automobile', 'Éducation et formation', 'Banque, finance et assurance', 'Technologie et télécoms',
+  'Transport et logistique', 'Sport et loisirs', 'Événementiel et culture', 'Conseil et services aux entreprises',
+  'Association et institution', 'Particulier', 'Autre',
+];
+
+module.exports = { SECTORS, OFFERS, SERVICES, ACTIVITIES };

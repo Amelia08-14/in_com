@@ -52,8 +52,10 @@ async function priceItems(raw) {
 
 async function cartDetail(where, params) {
   const c = await one(
-    `SELECT c.*, u.name AS assigned_name, u.phone AS assigned_phone
-     FROM carts c LEFT JOIN users u ON u.id=c.assigned_to WHERE ${where}`, params);
+    `SELECT c.*, u.name AS assigned_name, u.phone AS assigned_phone,
+       cu.account_type AS client_type, cu.activity AS client_activity, cu.city AS client_city, cu.address AS client_address,
+       cu.website AS client_website, cu.social_url AS client_social, cu.nif AS client_nif, cu.rc AS client_rc
+     FROM carts c LEFT JOIN users u ON u.id=c.assigned_to LEFT JOIN users cu ON cu.id=c.user_id WHERE ${where}`, params);
   if (!c) return null;
   c.items = await q('SELECT * FROM cart_items WHERE cart_id=? ORDER BY id', [c.id]);
   c.events = await q(

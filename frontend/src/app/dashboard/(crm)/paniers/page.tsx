@@ -28,6 +28,14 @@ function CartModal({ id, onClose, onDone }: { id: number; onClose: () => void; o
             <div><b>{c.name}</b>{c.company && <> · {c.company}</>}<span className="sub" style={{ display: "block" }}>{[c.phone, c.email].filter(Boolean).join(' · ')}</span></div>
             <div style={{ textAlign: 'right' }}><Badge map={CART_STATUS} value={c.status} /><span className="sub" style={{ display: "block" }}>{c.assigned_name ? `Conseiller : ${c.assigned_name}` : 'Pas encore de conseiller'}</span></div>
           </div>
+          {(c.client_type || c.client_activity) && (
+            <dl className="kv">
+              <dt>Compte</dt><dd>{c.client_type === 'entreprise' ? 'Entreprise' : 'Particulier'}{c.client_activity && c.client_activity !== 'Particulier' && ` · ${c.client_activity}`}</dd>
+              {(c.client_address || c.client_city) && <><dt>Adresse</dt><dd>{[c.client_address, c.client_city].filter(Boolean).join(', ')}</dd></>}
+              {(c.client_website || c.client_social) && <><dt>En ligne</dt><dd>{[c.client_website, c.client_social].filter(Boolean).map((l: string) => <a key={l} className="link" href={l} target="_blank" rel="noreferrer" style={{ marginRight: 10 }}>{l.replace(/^https?:\/\//, '')}</a>)}</dd></>}
+              {(c.client_nif || c.client_rc) && <><dt>NIF / RC</dt><dd>{[c.client_nif, c.client_rc].filter(Boolean).join(' · ')}</dd></>}
+            </dl>
+          )}
           {c.message && <p style={{ color: 'var(--muted)', margin: 0 }}>« {c.message} »</p>}
           <div className="table-wrap">
             <table className="t">

@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import AuthShell from '@/components/AuthShell';
-import { api, homeAfterLogin, setSession, User } from '@/lib/api';
+import { api, API_URL, homeAfterLogin, setSession, User } from '@/lib/api';
 import '@/app/dashboard/espace.css';
 
 type Kind = 'particulier' | 'entreprise';
@@ -14,8 +14,12 @@ export default function Inscription() {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [show, setShow] = useState(false);
+  const [activities, setActivities] = useState<string[]>([]);
 
-  useEffect(() => setNext(new URLSearchParams(location.search).get('next') || ''), []);
+  useEffect(() => {
+    setNext(new URLSearchParams(location.search).get('next') || '');
+    fetch(`${API_URL}/public/activities`).then((r) => r.json()).then((a) => setActivities(a.filter((x: string) => x !== 'Particulier'))).catch(() => {});
+  }, []);
 
   async function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -50,7 +54,15 @@ export default function Inscription() {
         </div>
 
         {kind === 'entreprise' && (
-          <label className="field"><span>Nom de l’entreprise</span><input className="input" name="company" autoComplete="organization" required /></label>
+          <>
+            <label className="field"><span>Nom de l’entreprise</span><input className="input" name="company" autoComplete="organization" required /></label>
+            <label className="field"><span>Secteur d’activité</span>
+              <select className="input" name="activity" defaultValue="" required style={{ appearance: 'auto' }}>
+                <option value="" disabled>Choisir…</option>
+                {activities.map((a) => <option key={a}>{a}</option>)}
+              </select>
+            </label>
+          </>
         )}
         <label className="field"><span>{kind === 'entreprise' ? 'Votre nom et prénom' : 'Nom et prénom'}</span><input className="input" name="name" autoComplete="name" required /></label>
         <label className="field"><span>Téléphone</span><input className="input" name="phone" type="tel" inputMode="tel" autoComplete="tel" placeholder="+213 5 00 00 00 00" required /></label>

@@ -4,8 +4,10 @@ const bcrypt = require('bcryptjs');
 const { q, one } = require('../db');
 const { sign, auth, allow, ROLES } = require('../auth');
 const { notifyRole, wrap, HttpError, limit } = require('../util');
+const { ACTIVITIES } = require('../catalog');
 
 // ───────── Public ─────────
+router.get('/public/activities', (req, res) => res.json(ACTIVITIES));
 router.get('/public/offers', wrap(async (req, res) => res.json(await q('SELECT * FROM offers ORDER BY price_month'))));
 
 router.post('/public/contact', wrap(async (req, res) => {
@@ -30,8 +32,10 @@ router.post('/auth/register', limit(10, 60 * 60 * 1000), wrap(async (req, res) =
   const email = String(b.email || '').toLowerCase().trim();
   const phone = String(b.phone || '').trim().slice(0, 40);
   const password = String(b.password || '');
+  const activity = type === 'entreprise' ? String(b.activity || '').trim() : 'Particulier';
   if (name.length < 2) throw new HttpError(400, 'Indiquez votre nom et prénom');
   if (type === 'entreprise' && company.length < 2) throw new HttpError(400, 'Indiquez le nom de votre entreprise');
+  if (!ACTIVITIES.includes(activity)) throw new HttpError(400, 'Choisissez votre secteur d’activité');
   if (!EMAIL_RE.test(email) || email.length > 160) throw new HttpError(400, 'Adresse e-mail invalide');
   if (phone.replace(/\D/g, '').length < 9) throw new HttpError(400, 'Numéro de téléphone invalide');
   if (password.length < 8) throw new HttpError(400, 'Mot de passe trop court : 8 caractères minimum');
@@ -39,15 +43,15 @@ router.post('/auth/register', limit(10, 60 * 60 * 1000), wrap(async (req, res) =
 
   let r;
   try {
-    r = await q("INSERT INTO users (name, email, password_hash, role, account_type, company, phone) VALUES (?,?,?, 'client', ?,?,?)",
-      [name, email, await bcrypt.hash(password, 10), type, company || null, phone]);
+    r = await q("INSERT INTO users (name, email, password_hash, role, account_type, company, activity, phone) VALUES (?,?,?, 'client', ?,?,?,?)",
+      [name, email, await bcrypt.hash(password, 10), type, company || null, activity, phone]);
   } catch (e) {
     if (e.code === 'ER_DUP_ENTRY') throw new HttpError(409, 'Un compte existe déjà avec cet e-mail. Connectez-vous.');
     throw e;
   }
   // Fiche dans l'Univers, rattachée au compte : les commerciaux voient ce nouveau contact
-  await q("INSERT INTO prospects (name, contact_name, phone, email, source, client_user_id) VALUES (?,?,?,?, 'site', ?)",
-    [company || name, name, phone, email, r.insertId]);
+  await q("INSERT INTO prospects (name, contact_name, specialty, phone, email, source, client_user_id) VALUES (?,?,?,?,?, 'site', ?)",
+    [company || name, name, activity, phone, email, r.insertId]);
   await notifyRole(['commercial_sedentaire', 'responsable_commercial'], `Nouveau compte ${type} sur le site : ${company || name}`, '/dashboard/univers');
   const user = { id: r.insertId, name, role: 'client', email };
   res.json({ token: sign(user), user });
@@ -66,6 +70,71 @@ router.use(auth);
 router.get('/auth/me', wrap(async (req, res) => {
   const u = await one('SELECT id, name, email, role, phone, account_type, company FROM users WHERE id=?', [req.user.id]);
   res.json({ ...u, role_label: ROLES[u.role] });
+}));
+
+// ───────── Mon profil (espace client et équipe) ─────────
+const PROFILE_COLS = 'id, name, email, role, phone, account_type, company, activity, city, address, website, social_url, nif, rc';
+// Ce qui manque pour que le conseiller puisse préparer un devis (vide = profil complet)
+function missingFields(u) {
+  if (u.role !== 'client') return [];
+  const m = [];
+  if (!u.phone) m.push('téléphone');
+  if (!u.city) m.push('ville');
+  if (u.account_type === 'entreprise') {
+    if (!u.company) m.push('nom de l’entreprise');
+    if (!u.activity || u.activity === 'Particulier') m.push('secteur d’activité');
+    if (!u.address) m.push('adresse');
+  }
+  return m;
+}
+
+router.get('/me/profile', wrap(async (req, res) => {
+  const u = await one(`SELECT ${PROFILE_COLS} FROM users WHERE id=?`, [req.user.id]);
+  res.json({ ...u, missing: missingFields(u), activities: ACTIVITIES });
+}));
+
+const clean = (v, max) => { const t = String(v ?? '').trim().slice(0, max); return t || null; };
+const url = (v) => { const t = clean(v, 255); return t && !/^https?:\/\//i.test(t) ? `https://${t}` : t; };
+
+router.patch('/me/profile', wrap(async (req, res) => {
+  const b = req.body || {};
+  const me = await one(`SELECT ${PROFILE_COLS} FROM users WHERE id=?`, [req.user.id]);
+  const name = clean(b.name, 120);
+  const phone = clean(b.phone, 40);
+  if (!name || name.length < 2) throw new HttpError(400, 'Indiquez votre nom et prénom');
+  if (phone && phone.replace(/\D/g, '').length < 9) throw new HttpError(400, 'Numéro de téléphone invalide');
+
+  if (me.role !== 'client') {
+    await q('UPDATE users SET name=?, phone=? WHERE id=?', [name, phone, me.id]);
+    return res.json({ ok: true });
+  }
+  const type = b.account_type === 'particulier' ? 'particulier' : 'entreprise';
+  const company = type === 'entreprise' ? clean(b.company, 160) : null;
+  const activity = type === 'entreprise' ? clean(b.activity, 80) : 'Particulier';
+  if (type === 'entreprise' && (!company || company.length < 2)) throw new HttpError(400, 'Indiquez le nom de votre entreprise');
+  if (type === 'entreprise' && (!activity || !ACTIVITIES.includes(activity) || activity === 'Particulier')) throw new HttpError(400, 'Choisissez votre secteur d’activité');
+  if (!phone) throw new HttpError(400, 'Le téléphone est obligatoire');
+  const f = {
+    account_type: type, company, activity, name, phone,
+    city: clean(b.city, 80), address: clean(b.address, 255), website: url(b.website), social_url: url(b.social_url),
+    nif: type === 'entreprise' ? clean(b.nif, 40) : null, rc: type === 'entreprise' ? clean(b.rc, 40) : null,
+  };
+  await q(`UPDATE users SET ${Object.keys(f).map((k) => `${k}=?`).join(', ')} WHERE id=?`, [...Object.values(f), me.id]);
+  // La fiche Univers du client suit son profil : l'équipe voit toujours des informations à jour
+  await q('UPDATE prospects SET name=?, contact_name=?, specialty=?, phone=?, address=? WHERE client_user_id=?',
+    [company || name, name, activity, phone, [f.address, f.city].filter(Boolean).join(', ') || null, me.id]);
+  const u = await one(`SELECT ${PROFILE_COLS} FROM users WHERE id=?`, [me.id]);
+  res.json({ ...u, missing: missingFields(u) });
+}));
+
+router.post('/me/password', limit(10, 15 * 60 * 1000), wrap(async (req, res) => {
+  const { current, password } = req.body || {};
+  const u = await one('SELECT id, password_hash FROM users WHERE id=?', [req.user.id]);
+  if (!(await bcrypt.compare(String(current || ''), u.password_hash))) throw new HttpError(400, 'Mot de passe actuel incorrect');
+  if (String(password || '').length < 8) throw new HttpError(400, 'Nouveau mot de passe trop court : 8 caractères minimum');
+  if (password === current) throw new HttpError(400, 'Choisissez un mot de passe différent de l’actuel');
+  await q('UPDATE users SET password_hash=? WHERE id=?', [await bcrypt.hash(String(password), 10), u.id]);
+  res.json({ ok: true });
 }));
 
 router.get('/roles', (req, res) => res.json(ROLES));

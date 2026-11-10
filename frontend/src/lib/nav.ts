@@ -59,6 +59,7 @@ export const CLIENT_NAV: NavItem[] = [
   { href: '/espace-client/a-valider', label: 'À valider', icon: I.check },
   { href: '/espace-client/extras', label: 'Commander un extra', icon: I.cart },
   { href: '/espace-client/support', label: 'Support', icon: I.sav },
+  { href: '/espace-client/profil', label: 'Mon profil', icon: I.team },
 ];
 
 // Anciens liens de notification (/dashboard/...) reçus par un client → page équivalente de son espace

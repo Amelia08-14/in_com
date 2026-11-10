@@ -12,6 +12,7 @@ import { UserCtx } from '@/lib/me';
 import { api, fmtDate, getToken, getUser, logout, User, CLIENT_HOME, TEAM_HOME } from '@/lib/api';
 import { CLIENT_NAV, NAV, clientLink } from '@/lib/nav';
 import { ROLE_LABELS } from '@/lib/labels';
+import { PROFILE_EVENT } from '@/components/ProfilePage';
 import '@/app/dashboard/espace.css';
 
 type Space = 'team' | 'client';
@@ -39,6 +40,24 @@ function Bell({ space }: { space: Space }) {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+// Bandeau de l'espace client tant que le profil est incomplet (sauf sur la page profil elle-même)
+function ProfileBanner({ path }: { path: string }) {
+  const [missing, setMissing] = useState<string[]>([]);
+  useEffect(() => {
+    const load = () => api('/me/profile').then((p) => setMissing(p.missing || [])).catch(() => {});
+    load();
+    window.addEventListener(PROFILE_EVENT, load);
+    return () => window.removeEventListener(PROFILE_EVENT, load);
+  }, []);
+  if (!missing.length || path.startsWith(`${CLIENT_HOME}/profil`)) return null;
+  return (
+    <div className="profile-banner">
+      <p><b>Complétez votre profil</b> pour que votre conseiller prépare votre devis : {missing.join(', ')}.</p>
+      <Link href={`${CLIENT_HOME}/profil`} className="btn btn-primary btn-sm">Compléter mon profil</Link>
     </div>
   );
 }
@@ -85,6 +104,7 @@ export default function AppShell({ space, children }: { space: Space; children: 
               })}
             </nav>
             <div className="bottom">
+              {space === 'team' && <Link href={`${TEAM_HOME}/profil`}>Mon profil</Link>}
               <Link href="/">Voir le site</Link>
               <button onClick={logout}>Se déconnecter</button>
             </div>
@@ -94,7 +114,10 @@ export default function AppShell({ space, children }: { space: Space; children: 
               <span className="date">{today}</span>
               <Bell space={space} />
             </div>
-            <div className="content">{children}</div>
+            <div className="content">
+              {space === 'client' && <ProfileBanner path={path} />}
+              {children}
+            </div>
           </div>
         </div>
       </ToastProvider>

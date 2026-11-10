@@ -33,6 +33,13 @@ CREATE TABLE users (
   ) NOT NULL,
   account_type ENUM('particulier','entreprise') NULL,   -- comptes clients créés depuis le site
   company VARCHAR(160) NULL,
+  activity VARCHAR(80) NULL,               -- secteur d'activité du client
+  city VARCHAR(80) NULL,
+  address VARCHAR(255) NULL,
+  website VARCHAR(255) NULL,
+  social_url VARCHAR(255) NULL,            -- page Instagram ou Facebook
+  nif VARCHAR(40) NULL,
+  rc VARCHAR(40) NULL,
   phone VARCHAR(40),
   daily_capacity INT NOT NULL DEFAULT 6,   -- capacité journalière (graphiste)
   active TINYINT(1) NOT NULL DEFAULT 1,
