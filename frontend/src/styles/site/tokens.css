@@ -1,0 +1,29 @@
+:root {
+  --space-3xs: 2px; --space-2xs: 4px; --space-xs: 8px; --space-sm: 12px; --space-md: 16px; --space-lg: 24px; --space-xl: 40px; --space-2xl: 64px; --space-3xl: 96px; --space-4xl: 144px;
+  --text-xs: 0.8125rem; --text-sm: 0.875rem; --text-md: 1rem; --text-lg: 1.25rem; --text-xl: 1.5625rem; --text-2xl: 1.953rem; --text-3xl: 2.441rem;
+  --text-display-s: clamp(2.25rem, 4vw + 0.5rem, 3.75rem); --text-display: clamp(2.75rem, 5vw + 1rem, 5.25rem);
+  --text-section: clamp(2rem, 2.5vw + 1rem, 3.5rem); --text-title: clamp(1.25rem, 0.75vw + 0.875rem, 1.625rem); --text-lead: clamp(1.125rem, 0.35vw + 1rem, 1.375rem);
+  --text-wordmark: clamp(1.75rem, 6.4vw, 6.25rem);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1); --ease-in: cubic-bezier(0.7, 0, 0.84, 0); --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-micro: 120ms; --dur-short: 220ms; --dur-long: 420ms;
+  --color-error: oklch(52% 0.19 27); --color-success: oklch(50% 0.12 150);
+  --container: 1440px; --gutter: 64px; --gap-columns: 32px; --section-gap-s: 120px; --section-gap: 144px; --section-gap-l: 176px;
+  --z-base: 1; --z-raised: 10; --z-dropdown: 100; --z-sticky: 200; --z-sticky-nav: 300; --z-modal: 400; --z-toast: 500; --z-tooltip: 600;
+
+  /* Charte IN COMMUNICATION 2026 : #001042 marine · #005395 bleu · #FD5816 orange · Roboto Slab */
+  /* Page claire : le marine et le bleu restent sur les boutons, les liens et les graphiques */
+  --color-paper: oklch(98.2% 0.004 85); --color-paper-2: oklch(95.6% 0.006 85); --color-paper-3: oklch(92.4% 0.008 85);
+  --color-ink: oklch(21% 0.03 266); --color-ink-2: oklch(44% 0.13 252); --color-muted: oklch(47% 0.015 266);
+  --color-body: oklch(31% 0.02 266);
+  --color-rule: oklch(89% 0.006 85);
+  --color-brand: oklch(20% 0.1 266); --color-brand-hover: oklch(27% 0.11 266); --color-on-brand: oklch(97.5% 0.006 266);
+  --color-brand-soft: oklch(93% 0.025 260);
+  --color-accent: oklch(67% 0.21 38); --color-accent-ink: oklch(20% 0.1 266); --color-accent-hover: oklch(62% 0.21 38); --color-focus: oklch(64% 0.2 38);
+  --color-field: oklch(20% 0.1 266); --color-on-field: oklch(96% 0.012 266); --color-on-field-muted: oklch(80% 0.03 266); --color-field-rule: oklch(34% 0.08 266);
+  --color-shadow: oklch(20% 0.05 266 / 0.14); --color-field-edge: oklch(60% 0.015 266);
+  --font-display: var(--ff-slab), "Roboto Slab", ui-serif, Georgia, serif; --font-body: var(--ff-sans), "Inter", ui-sans-serif, system-ui, sans-serif; --font-outlier: var(--font-body);
+  --display-weight: 300;
+  --radius-card: 14px; --radius-control: 10px; --radius-pill: 999px; --rule-hair: 1px;
+  --shadow-card: 0 24px 60px -24px var(--color-shadow);
+  --tracking-display: -0.025em;
+}

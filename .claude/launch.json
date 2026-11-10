@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "api",
+      "runtimeExecutable": "/Users/mohamedchakibaissati/Documents/in_com/scripts/dev-api.sh",
+      "runtimeArgs": [],
+      "port": 4000
+    },
+    {
+      "name": "web",
+      "runtimeExecutable": "/Users/mohamedchakibaissati/Documents/in_com/scripts/dev-web.sh",
+      "runtimeArgs": [],
+      "port": 3000
+    }
+  ]
+}
