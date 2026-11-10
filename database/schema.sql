@@ -31,6 +31,8 @@ CREATE TABLE users (
     'recouvrement',
     'client'
   ) NOT NULL,
+  account_type ENUM('particulier','entreprise') NULL,   -- comptes clients créés depuis le site
+  company VARCHAR(160) NULL,
   phone VARCHAR(40),
   daily_capacity INT NOT NULL DEFAULT 6,   -- capacité journalière (graphiste)
   active TINYINT(1) NOT NULL DEFAULT 1,
@@ -304,6 +306,7 @@ CREATE TABLE carts (
   email VARCHAR(160),
   message TEXT,
   prospect_id INT NULL,
+  user_id INT NULL,                        -- compte client qui a envoyé le panier
   assigned_to INT NULL,
   status ENUM('recue','contactee','devis_envoye','confirmee','en_production','livree','annulee') NOT NULL DEFAULT 'recue',
   total_once INT NOT NULL DEFAULT 0,
@@ -311,6 +314,7 @@ CREATE TABLE carts (
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (prospect_id) REFERENCES prospects(id) ON DELETE SET NULL,
+  CONSTRAINT fk_carts_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
   FOREIGN KEY (assigned_to) REFERENCES users(id) ON DELETE SET NULL
 );
 

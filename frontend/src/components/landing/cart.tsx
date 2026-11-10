@@ -3,7 +3,7 @@
 // Le navigateur ne garde que des références ; les prix sont recalculés par l'API à l'envoi.
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { API_URL } from '@/lib/api';
+import { API_URL, clearSession, getToken, getUser, User } from '@/lib/api';
 
 export type CartItem = { kind: 'offer' | 'service' | 'devis'; ref: string; label: string; months?: number; quantity: number; unit_price: number };
 type Ctx = {
@@ -32,9 +32,21 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
   const [items, setItems] = useState<CartItem[]>([]);
   const [open, setOpen] = useState(false);
   const [bump, setBump] = useState(0);
+  const [resume, setResume] = useState(false);
   const ready = useRef(false);
 
-  useEffect(() => { setItems(read('incom_cart', [])); ready.current = true; }, []);
+  useEffect(() => {
+    setItems(read('incom_cart', []));
+    ready.current = true;
+    // Retour de la connexion ou de l'inscription (?panier=1) : on rouvre le panier à l'étape d'envoi
+    const url = new URL(location.href);
+    if (url.searchParams.get('panier') === '1') {
+      url.searchParams.delete('panier');
+      history.replaceState(null, '', url.pathname + url.search + url.hash);
+      setResume(true);
+      setOpen(true);
+    }
+  }, []);
   useEffect(() => { if (ready.current) write('incom_cart', items); }, [items]);
 
   // Petite pastille orange qui vole du bouton jusqu'au panier
@@ -82,7 +94,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     <CartCtx.Provider value={{ items, count, add, setQty, remove, has, openCart: () => setOpen(true) }}>
       {children}
       <CartButtonPortal count={count} bump={bump} onOpen={() => setOpen(true)} />
-      <CartDrawer open={open} onClose={() => setOpen(false)} items={items} setItems={setItems} />
+      <CartDrawer open={open} onClose={() => setOpen(false)} items={items} setItems={setItems} resume={resume} />
     </CartCtx.Provider>
   );
 }
@@ -102,13 +114,21 @@ function CartButtonPortal({ count, bump, onOpen }: { count: number; bump: number
   );
 }
 
-function CartDrawer({ open, onClose, items, setItems }: { open: boolean; onClose: () => void; items: CartItem[]; setItems: (v: CartItem[]) => void }) {
+const AUTH_NEXT = encodeURIComponent('/?panier=1');
+
+function CartDrawer({ open, onClose, items, setItems, resume }: { open: boolean; onClose: () => void; items: CartItem[]; setItems: (v: CartItem[]) => void; resume: boolean }) {
   const { setQty, remove } = useCart();
   const [stage, setStage] = useState<'cart' | 'form' | 'done'>('cart');
   const [state, setState] = useState<'idle' | 'sending' | 'error'>('idle');
   const [error, setError] = useState('');
   const [code, setCode] = useState('');
+  const [user, setUser] = useState<User | null>(null);
   const panel = useRef<HTMLDivElement>(null);
+
+  // Le compte client (connexion faite sur /dashboard, même domaine) est relu à chaque ouverture
+  useEffect(() => { if (open) setUser(getToken() ? getUser() : null); }, [open]);
+  useEffect(() => { if (resume) setStage('form'); }, [resume]);
+  const signOut = () => { clearSession(); setUser(null); };
 
   useEffect(() => {
     if (!open) return;
@@ -130,10 +150,11 @@ function CartDrawer({ open, onClose, items, setItems }: { open: boolean; onClose
     setState('sending');
     try {
       const res = await fetch(`${API_URL}/public/carts`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...data, items: items.map(({ kind, ref, months, quantity }) => ({ kind, ref, months, quantity })) }),
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}` },
+        body: JSON.stringify({ message: data.message, items: items.map(({ kind, ref, months, quantity }) => ({ kind, ref, months, quantity })) }),
       });
-      const json = await res.json();
+      const json = await res.json().catch(() => ({}));
+      if (res.status === 401) { signOut(); setState('idle'); return; }
       if (!res.ok) throw new Error(json.error);
       setCode(json.code);
       write('incom_orders', [json.code, ...read<string[]>('incom_orders', []).filter((c) => c !== json.code)].slice(0, 10));
@@ -151,7 +172,7 @@ function CartDrawer({ open, onClose, items, setItems }: { open: boolean; onClose
       <div className="drawer-scrim" onClick={onClose} />
       <div ref={panel} className="drawer" role="dialog" aria-modal="true" aria-labelledby="cart-title" inert={!open}>
         <header className="drawer-head">
-          <h2 id="cart-title">{stage === 'done' ? 'Commande envoyée' : stage === 'form' ? 'Vos coordonnées' : 'Votre panier'}</h2>
+          <h2 id="cart-title">{stage === 'done' ? 'Demande envoyée' : stage === 'form' ? (user ? 'Finaliser la demande' : 'Votre compte client') : 'Votre panier'}</h2>
           <button type="button" className="icon-btn" onClick={onClose} aria-label="Fermer le panier">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
           </button>
@@ -164,7 +185,7 @@ function CartDrawer({ open, onClose, items, setItems }: { open: boolean; onClose
             <p className="code">{code}</p>
             <p className="muted">Un conseiller vous appelle sous 24 h ouvrées pour confirmer votre commande. Gardez ce code : il vous permet de suivre chaque étape.</p>
             <a className="btn btn-primary btn-block" href={`/suivi/${code}`}>Suivre ma commande</a>
-            <button type="button" className="btn btn-ghost btn-block" onClick={() => navigator.clipboard?.writeText(`${location.origin}/suivi/${code}`)}>Copier le lien de suivi</button>
+            <a className="btn btn-ghost btn-block" href="/dashboard/mes-demandes">Voir toutes mes demandes</a>
           </div>
         ) : items.length === 0 ? (
           <div className="drawer-body empty">
@@ -208,16 +229,26 @@ function CartDrawer({ open, onClose, items, setItems }: { open: boolean; onClose
               <button type="button" className="btn btn-accent btn-block" onClick={() => setStage('form')}>Passer la commande</button>
             </footer>
           </>
+        ) : !user ? (
+          <div className="drawer-body form-drawer account-gate">
+            <button type="button" className="back" onClick={() => setStage('cart')}>← Revenir au panier</button>
+            <p className="gate-title">Un compte client est nécessaire pour envoyer votre demande.</p>
+            <p className="muted">Il vous permet de recevoir votre devis, de suivre chaque commande et d’échanger avec votre conseiller. Votre panier reste enregistré pendant la création du compte.</p>
+            <a className="btn btn-accent btn-block" href={`/dashboard/inscription?next=${AUTH_NEXT}`}>Créer mon compte</a>
+            <a className="btn btn-ghost btn-block" href={`/dashboard/connexion?next=${AUTH_NEXT}`}>J’ai déjà un compte</a>
+          </div>
         ) : (
           <form className="drawer-body form-drawer" onSubmit={submit}>
             <button type="button" className="back" onClick={() => setStage('cart')}>← Revenir au panier</button>
-            <label className="field"><span>Nom et prénom</span><input className="input" name="name" autoComplete="name" required /></label>
-            <label className="field"><span>Entreprise</span><input className="input" name="company" autoComplete="organization" /></label>
-            <label className="field"><span>Téléphone</span><input className="input" name="phone" type="tel" inputMode="tel" autoComplete="tel" placeholder="+213" required /></label>
-            <label className="field"><span>E-mail</span><input className="input" name="email" type="email" autoComplete="email" /></label>
+            <div className="who">
+              <span>Envoyée au nom de</span>
+              <b>{user.name}</b>
+              <small>{user.email}</small>
+              <button type="button" className="link" onClick={signOut}>Ce n’est pas vous ? Changer de compte</button>
+            </div>
             <label className="field"><span>Précisions</span><textarea className="input" name="message" placeholder="Votre activité, vos délais, vos questions" /></label>
             <p className="error" aria-live="polite">{state === 'error' ? error : ''}</p>
-            <button type="submit" className="btn btn-accent btn-block" disabled={state === 'sending'}>{state === 'sending' ? 'Envoi…' : `Envoyer ma commande (${items.length} article${items.length > 1 ? 's' : ''})`}</button>
+            <button type="submit" className="btn btn-accent btn-block" disabled={state === 'sending'}>{state === 'sending' ? 'Envoi…' : `Envoyer ma demande (${items.length} article${items.length > 1 ? 's' : ''})`}</button>
           </form>
         )}
       </div>

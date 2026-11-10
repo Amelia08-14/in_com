@@ -16,10 +16,18 @@ export function getUser(): User | null {
   try { return JSON.parse(localStorage.getItem('incom_user') || 'null'); } catch { return null; }
 }
 
+export function clearSession() {
+  try { localStorage.removeItem('incom_token'); localStorage.removeItem('incom_user'); } catch { /* stockage indisponible */ }
+}
+
 export function logout() {
-  localStorage.removeItem('incom_token');
-  localStorage.removeItem('incom_user');
+  clearSession();
   window.location.href = '/dashboard/connexion';
+}
+
+// Retour après connexion ou inscription : seulement un chemin interne au site
+export function safeNext(v: string | null | undefined, fallback = '/dashboard') {
+  return v && v.startsWith('/') && !v.startsWith('//') ? v : fallback;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -34,7 +42,7 @@ export async function api<T = any>(path: string, opts: { method?: string; body?:
     body: opts.body ? JSON.stringify(opts.body) : undefined,
   });
   const data = await res.json().catch(() => ({}));
-  if (res.status === 401 && typeof window !== 'undefined' && !path.startsWith('/auth/login')) {
+  if (res.status === 401 && typeof window !== 'undefined' && !path.startsWith('/auth/login') && !path.startsWith('/auth/register')) {
     logout();
   }
   if (!res.ok) throw new Error(data.error || 'Erreur réseau');

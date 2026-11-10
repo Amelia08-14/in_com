@@ -68,19 +68,29 @@ const pub = require('express').Router();
 pub.get('/public/services', wrap(async (req, res) => res.json(await q('SELECT id, name, price, unit FROM services ORDER BY price'))));
 pub.get('/public/devis', (req, res) => res.json(Object.entries(DEVIS).map(([ref, label]) => ({ ref, label }))));
 
-pub.post('/public/carts', wrap(async (req, res) => {
-  const { name, company, phone, email, message } = req.body || {};
-  if (!name || String(name).trim().length < 2) throw new HttpError(400, 'Indiquez votre nom');
-  if (!phone && !email) throw new HttpError(400, 'Indiquez un téléphone ou un e-mail');
-  const items = await priceItems(req.body.items);
+// Envoi du panier : réservé aux comptes clients (inscription sur /dashboard/inscription).
+// Nom, entreprise, téléphone et e-mail viennent du compte, pas du formulaire.
+pub.post('/public/carts', auth, wrap(async (req, res) => {
+  const u = await one('SELECT id, name, email, phone, company, role FROM users WHERE id=? AND active=1', [req.user.id]);
+  if (!u) throw new HttpError(401, 'Session expirée');
+  if (u.role !== 'client') throw new HttpError(403, 'Les demandes de devis se font avec un compte client');
+  const { name, company, phone, email } = u;
+  const message = req.body?.message ? String(req.body.message).slice(0, 2000) : null;
+  const items = await priceItems(req.body?.items);
   const once = items.filter((i) => i.kind === 'service').reduce((s, i) => s + i.total, 0);
   const offer = items.find((i) => i.kind === 'offer');
   const monthly = offer ? offer.unit_price : 0;
 
-  // Le panier alimente l'Univers comme le formulaire de contact (source « site »)
+  // Le panier alimente l'Univers (source « site ») : on réutilise la fiche du compte si elle existe
   const o = offer ? await one('SELECT id FROM offers WHERE code=?', [offer.ref]) : null;
-  const p = await q("INSERT INTO prospects (name, contact_name, phone, email, source, offer_id) VALUES (?,?,?,?, 'site', ?)",
-    [company || name, name, phone || null, email || null, o ? o.id : null]);
+  let p = await one('SELECT id FROM prospects WHERE client_user_id=? ORDER BY id LIMIT 1', [u.id]);
+  if (p) {
+    if (o) await q('UPDATE prospects SET offer_id=? WHERE id=?', [o.id, p.id]);
+    p = { insertId: p.id };
+  } else {
+    p = await q("INSERT INTO prospects (name, contact_name, phone, email, source, offer_id, client_user_id) VALUES (?,?,?,?, 'site', ?, ?)",
+      [company || name, name, phone || null, email || null, o ? o.id : null, u.id]);
+  }
 
   let code;
   for (let i = 0; i < 5; i++) {
@@ -88,8 +98,8 @@ pub.post('/public/carts', wrap(async (req, res) => {
     if (!(await one('SELECT id FROM carts WHERE code=?', [code]))) break;
   }
   const r = await q(
-    'INSERT INTO carts (code, name, company, phone, email, message, prospect_id, total_once, total_monthly) VALUES (?,?,?,?,?,?,?,?,?)',
-    [code, String(name).trim(), company || null, phone || null, email || null, message || null, p.insertId, once, monthly]);
+    'INSERT INTO carts (code, name, company, phone, email, message, prospect_id, user_id, total_once, total_monthly) VALUES (?,?,?,?,?,?,?,?,?,?)',
+    [code, name, company || null, phone || null, email || null, message, p.insertId, u.id, once, monthly]);
   for (const i of items) {
     await q('INSERT INTO cart_items (cart_id, kind, ref, label, months, quantity, unit_price, total) VALUES (?,?,?,?,?,?,?,?)',
       [r.insertId, i.kind, i.ref, i.label, i.months, i.quantity, i.unit_price, i.total]);
@@ -99,6 +109,14 @@ pub.post('/public/carts', wrap(async (req, res) => {
     [name, company, phone, email, offer ? offer.ref : 'panier', `Panier ${code} : ${items.map((i) => i.label).join(', ')}${message ? `\n${message}` : ''}`, p.insertId]);
   await notifyRole(['commercial_sedentaire', 'responsable_commercial'], `Nouveau panier ${code} : ${company || name}`, '/dashboard/paniers');
   res.json({ code });
+}));
+
+// Les demandes du client connecté (page « Mes demandes de devis » de son espace)
+pub.get('/my/carts', auth, wrap(async (req, res) => {
+  res.json(await q(
+    `SELECT c.id, c.code, c.status, c.total_once, c.total_monthly, c.created_at, c.updated_at,
+       (SELECT GROUP_CONCAT(label ORDER BY id SEPARATOR ' · ') FROM cart_items WHERE cart_id=c.id) AS summary
+     FROM carts c WHERE c.user_id=? ORDER BY c.created_at DESC`, [req.user.id]));
 }));
 
 // Suivi public : le code fait office de clé, on ne renvoie que ce qui est utile au client

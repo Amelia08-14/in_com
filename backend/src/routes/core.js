@@ -3,7 +3,7 @@ const router = require('express').Router();
 const bcrypt = require('bcryptjs');
 const { q, one } = require('../db');
 const { sign, auth, allow, ROLES } = require('../auth');
-const { notifyRole, wrap, HttpError } = require('../util');
+const { notifyRole, wrap, HttpError, limit } = require('../util');
 
 // ───────── Public ─────────
 router.get('/public/offers', wrap(async (req, res) => res.json(await q('SELECT * FROM offers ORDER BY price_month'))));
@@ -19,7 +19,41 @@ router.post('/public/contact', wrap(async (req, res) => {
   res.json({ ok: true });
 }));
 
-router.post('/auth/login', wrap(async (req, res) => {
+// Inscription d'un client depuis le site (particulier ou entreprise).
+// Le compte est obligatoire pour envoyer un panier ou une demande de devis.
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+router.post('/auth/register', limit(10, 60 * 60 * 1000), wrap(async (req, res) => {
+  const b = req.body || {};
+  const type = b.account_type === 'entreprise' ? 'entreprise' : 'particulier';
+  const name = String(b.name || '').trim().slice(0, 120);
+  const company = type === 'entreprise' ? String(b.company || '').trim().slice(0, 160) : '';
+  const email = String(b.email || '').toLowerCase().trim();
+  const phone = String(b.phone || '').trim().slice(0, 40);
+  const password = String(b.password || '');
+  if (name.length < 2) throw new HttpError(400, 'Indiquez votre nom et prénom');
+  if (type === 'entreprise' && company.length < 2) throw new HttpError(400, 'Indiquez le nom de votre entreprise');
+  if (!EMAIL_RE.test(email) || email.length > 160) throw new HttpError(400, 'Adresse e-mail invalide');
+  if (phone.replace(/\D/g, '').length < 9) throw new HttpError(400, 'Numéro de téléphone invalide');
+  if (password.length < 8) throw new HttpError(400, 'Mot de passe trop court : 8 caractères minimum');
+  if (await one('SELECT id FROM users WHERE email=?', [email])) throw new HttpError(409, 'Un compte existe déjà avec cet e-mail. Connectez-vous.');
+
+  let r;
+  try {
+    r = await q("INSERT INTO users (name, email, password_hash, role, account_type, company, phone) VALUES (?,?,?, 'client', ?,?,?)",
+      [name, email, await bcrypt.hash(password, 10), type, company || null, phone]);
+  } catch (e) {
+    if (e.code === 'ER_DUP_ENTRY') throw new HttpError(409, 'Un compte existe déjà avec cet e-mail. Connectez-vous.');
+    throw e;
+  }
+  // Fiche dans l'Univers, rattachée au compte : les commerciaux voient ce nouveau contact
+  await q("INSERT INTO prospects (name, contact_name, phone, email, source, client_user_id) VALUES (?,?,?,?, 'site', ?)",
+    [company || name, name, phone, email, r.insertId]);
+  await notifyRole(['commercial_sedentaire', 'responsable_commercial'], `Nouveau compte ${type} sur le site : ${company || name}`, '/dashboard/univers');
+  const user = { id: r.insertId, name, role: 'client', email };
+  res.json({ token: sign(user), user });
+}));
+
+router.post('/auth/login', limit(20, 15 * 60 * 1000), wrap(async (req, res) => {
   const { email, password } = req.body;
   const u = await one('SELECT * FROM users WHERE email=? AND active=1', [String(email || '').toLowerCase().trim()]);
   if (!u || !(await bcrypt.compare(password || '', u.password_hash))) throw new HttpError(401, 'Identifiants incorrects');
@@ -30,7 +64,7 @@ router.post('/auth/login', wrap(async (req, res) => {
 router.use(auth);
 
 router.get('/auth/me', wrap(async (req, res) => {
-  const u = await one('SELECT id, name, email, role, phone FROM users WHERE id=?', [req.user.id]);
+  const u = await one('SELECT id, name, email, role, phone, account_type, company FROM users WHERE id=?', [req.user.id]);
   res.json({ ...u, role_label: ROLES[u.role] });
 }));
 

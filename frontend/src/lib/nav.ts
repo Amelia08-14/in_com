@@ -34,6 +34,7 @@ const myStats: NavItem = { href: '/dashboard/mon-reporting', label: 'Mon reporti
 const usersNav: NavItem = { href: '/dashboard/utilisateurs', label: 'Utilisateurs', icon: I.team };
 const leads: NavItem = { href: '/dashboard/demandes', label: 'Demandes du site', icon: I.inbox };
 const carts: NavItem = { href: '/dashboard/paniers', label: 'Paniers du site', icon: I.cart };
+const myRequests: NavItem = { href: '/dashboard/mes-demandes', label: 'Mes demandes de devis', icon: I.inbox };
 
 export const NAV: Record<string, NavItem[]> = {
   admin: [dash, univers, reporting, deals, cal, dossiers, clients, tasks, validation, gdTeam, sav, orders, carts, leads, usersNav],
@@ -49,5 +50,5 @@ export const NAV: Record<string, NavItem[]> = {
   media_buyer: [dash, { ...tasks, label: 'Mes tâches' }, { ...clients, label: 'Mes clients' }],
   community_manager: [dash, { ...validation, label: 'À publier' }, dossiers, { ...clients, label: 'Mes clients' }],
   recouvrement: [dash, orders, sav],
-  client: [dash, { ...dossiers, label: 'Mes projets' }, { ...validation, label: 'À valider' }, { ...orders, label: 'Commander un extra' }, { ...sav, label: 'Support' }],
+  client: [dash, myRequests, { ...dossiers, label: 'Mes projets' }, { ...validation, label: 'À valider' }, { ...orders, label: 'Commander un extra' }, { ...sav, label: 'Support' }],
 };

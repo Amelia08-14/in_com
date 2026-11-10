@@ -4,6 +4,8 @@ const cors = require('cors');
 const { auth } = require('./auth');
 
 const app = express();
+// Derrière Nginx : l'adresse du visiteur arrive dans X-Forwarded-For (utile au limiteur d'essais)
+app.set('trust proxy', 'loopback');
 app.use(cors({ origin: (process.env.CORS_ORIGIN || 'http://localhost:3000').split(',') }));
 app.use(express.json({ limit: '2mb' }));
 

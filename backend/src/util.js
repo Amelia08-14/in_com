@@ -41,4 +41,19 @@ class HttpError extends Error {
   }
 }
 
-module.exports = { notify, notifyRole, ymd, isWorkday, remainingWorkdays, wrap, HttpError };
+// Limiteur simple en mémoire (un seul processus PM2) : `max` essais par fenêtre et par adresse IP.
+// Protège l'inscription et la connexion contre les robots et les essais de mots de passe.
+function limit(max, windowMs) {
+  const hits = new Map();
+  return (req, res, next) => {
+    const now = Date.now();
+    const recent = (hits.get(req.ip) || []).filter((t) => now - t < windowMs);
+    if (recent.length >= max) return res.status(429).json({ error: 'Trop de tentatives. Réessayez dans quelques minutes.' });
+    recent.push(now);
+    hits.set(req.ip, recent);
+    if (hits.size > 10000) hits.clear();
+    next();
+  };
+}
+
+module.exports = { notify, notifyRole, ymd, isWorkday, remainingWorkdays, wrap, HttpError, limit };
