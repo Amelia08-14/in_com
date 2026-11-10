@@ -3,19 +3,19 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import AuthShell from '@/components/AuthShell';
-import { api, safeNext, setSession, User } from '@/lib/api';
-import '../espace.css';
+import { api, homeAfterLogin, setSession, User } from '@/lib/api';
+import '@/app/dashboard/espace.css';
 
 type Kind = 'particulier' | 'entreprise';
 
 export default function Inscription() {
   const [kind, setKind] = useState<Kind>('entreprise');
-  const [next, setNext] = useState('/dashboard');
+  const [next, setNext] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [show, setShow] = useState(false);
 
-  useEffect(() => setNext(safeNext(new URLSearchParams(location.search).get('next'))), []);
+  useEffect(() => setNext(new URLSearchParams(location.search).get('next') || ''), []);
 
   async function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -25,7 +25,7 @@ export default function Inscription() {
     try {
       const r = await api<{ token: string; user: User }>('/auth/register', { body: { ...f, account_type: kind } });
       setSession(r.token, r.user);
-      window.location.href = next;
+      window.location.href = homeAfterLogin(r.user.role, next);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Erreur');
       setBusy(false);
@@ -66,7 +66,7 @@ export default function Inscription() {
         {error && <p style={{ color: 'var(--danger)', margin: 0, fontSize: 14 }} aria-live="polite">{error}</p>}
         <button className="btn btn-primary" style={{ height: 46 }} disabled={busy}>{busy ? 'Création du compte…' : 'Créer mon compte'}</button>
         <p style={{ margin: 0, fontSize: 14, color: 'var(--muted)', textAlign: 'center' }}>
-          Déjà un compte ? <Link className="link" href={`/dashboard/connexion?next=${encodeURIComponent(next)}`}>Se connecter</Link>
+          Déjà un compte ? <Link className="link" href={`/espace-client/connexion${next ? `?next=${encodeURIComponent(next)}` : ''}`}>Se connecter</Link>
         </p>
       </form>
     </AuthShell>

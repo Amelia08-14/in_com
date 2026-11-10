@@ -180,7 +180,8 @@ router.post('/:id/tech-review', allow('responsable_technique'), wrap(async (req,
     await q("UPDATE tasks SET status='validation_client' WHERE id=?", [t.id]);
     await log(t.id, req.user.id, 'validation_technique', 'validation_client', req.body.note);
     const ccs = await q("SELECT user_id FROM client_assignments WHERE prospect_id=? AND role='charge_clientele'", [t.prospect_id]);
-    await notify([...ccs.map((c) => c.user_id), t.client_user_id], `Conception prête pour validation : ${t.client_name}`, '/dashboard/validation');
+    await notify(ccs.map((c) => c.user_id), `Conception prête pour validation : ${t.client_name}`, '/dashboard/validation');
+    if (t.client_user_id) await notify(t.client_user_id, `Une conception vous attend pour validation`, '/espace-client/a-valider');
   } else {
     await sendToModification(t, req.user.id, req.body.note, 'technique');
   }

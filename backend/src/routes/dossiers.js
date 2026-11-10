@@ -80,7 +80,7 @@ router.post('/:id/submit', allow('charge_clientele', 'responsable_communication'
   if (!['creation_en_cours', 'modification_demandee'].includes(d.status)) throw new HttpError(400, 'Rien à présenter');
   await q("UPDATE dossiers SET status='en_attente_validation', validated_at=NULL, next_followup=DATE_ADD(CURDATE(), INTERVAL 2 DAY) WHERE id=?", [d.id]);
   await log(d.id, req.user.id, 'en_attente_validation', req.body.note);
-  if (d.client_user_id) await notify(d.client_user_id, `Un livrable vous attend pour validation : ${d.title}`, '/dashboard/projets');
+  if (d.client_user_id) await notify(d.client_user_id, `Un livrable vous attend pour validation : ${d.title}`, '/espace-client/projets');
   res.json({ ok: true });
 }));
 
@@ -117,7 +117,7 @@ router.post('/:id/publish', allow('community_manager', 'responsable_communicatio
   if (!d.validated_at) throw new HttpError(400, 'Le contenu doit être validé par le client');
   await q("UPDATE dossiers SET status='publie' WHERE id=?", [d.id]);
   await log(d.id, req.user.id, 'publie', req.body.note);
-  if (d.client_user_id) await notify(d.client_user_id, `Publié : ${d.title}`, '/dashboard/projets');
+  if (d.client_user_id) await notify(d.client_user_id, `Publié : ${d.title}`, '/espace-client/projets');
   res.json({ ok: true });
 }));
 

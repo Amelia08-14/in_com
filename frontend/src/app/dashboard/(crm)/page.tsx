@@ -15,7 +15,7 @@ const QUICK: Record<string, [string, string][]> = {
   charge_clientele: [['/dashboard/validation', 'Présenter aux clients'], ['/dashboard/dossiers', 'Mes dossiers'], ['/dashboard/sav', 'SAV']],
   graphiste: [['/dashboard/taches', 'Mes tâches du jour'], ['/dashboard/mon-reporting', 'Ma progression']],
   community_manager: [['/dashboard/validation', 'Contenus à publier']],
-  client: [['/#offres', 'Demander un devis'], ['/dashboard/mes-demandes', 'Mes demandes'], ['/dashboard/validation', 'Valider mes contenus'], ['/dashboard/sav', 'Contacter le support']],
+  client: [['/#offres', 'Demander un devis'], ['/espace-client/demandes', 'Mes demandes'], ['/espace-client/a-valider', 'Valider mes contenus'], ['/espace-client/support', 'Contacter le support']],
   recouvrement: [['/dashboard/commandes', 'Commandes à encaisser']],
 };
 

@@ -126,6 +126,7 @@ sudo certbot --nginx -d VOTRE-DOMAINE.dz -d www.VOTRE-DOMAINE.dz
 
 - `https://VOTRE-DOMAINE.dz` : la landing ; ajouter au panier, envoyer, ouvrir le suivi.
 - `https://VOTRE-DOMAINE.dz/dashboard` : se connecter avec le compte Direction et créer les comptes de l'équipe.
+- `https://VOTRE-DOMAINE.dz/espace-client` : l'espace des clients (inscription, demandes de devis, projets).
 - Les logs : `pm2 logs incom-api` et `pm2 logs incom-web`.
 
 ## Mises à jour ensuite

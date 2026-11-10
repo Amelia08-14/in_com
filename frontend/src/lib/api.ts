@@ -20,14 +20,23 @@ export function clearSession() {
   try { localStorage.removeItem('incom_token'); localStorage.removeItem('incom_user'); } catch { /* stockage indisponible */ }
 }
 
-export function logout() {
-  clearSession();
-  window.location.href = '/dashboard/connexion';
+// Deux espaces séparés : /dashboard pour l'équipe, /espace-client pour les clients
+export const CLIENT_HOME = '/espace-client';
+export const TEAM_HOME = '/dashboard';
+export const loginPathFor = (pathname: string) =>
+  pathname.startsWith(CLIENT_HOME) || pathname === '/' ? `${CLIENT_HOME}/connexion` : `${TEAM_HOME}/connexion`;
+
+// Où aller après connexion : chaque rôle dans son espace, en respectant le retour demandé s'il lui correspond
+export function homeAfterLogin(role: string, next: string | null | undefined) {
+  const n = next && next.startsWith('/') && !next.startsWith('//') ? next : '';
+  if (role === 'client') return n && !n.startsWith(TEAM_HOME) ? n : CLIENT_HOME;
+  return n.startsWith(TEAM_HOME) ? n : TEAM_HOME;
 }
 
-// Retour après connexion ou inscription : seulement un chemin interne au site
-export function safeNext(v: string | null | undefined, fallback = '/dashboard') {
-  return v && v.startsWith('/') && !v.startsWith('//') ? v : fallback;
+export function logout() {
+  const to = loginPathFor(window.location.pathname);
+  clearSession();
+  window.location.href = to;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

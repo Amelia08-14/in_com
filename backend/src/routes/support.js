@@ -67,7 +67,7 @@ router.post('/tickets/:id/resolve', wrap(async (req, res) => {
   const t = await one('SELECT t.*, p.client_user_id FROM tickets t JOIN prospects p ON p.id=t.prospect_id WHERE t.id=?', [req.params.id]);
   if (!t) throw new HttpError(404, 'Ticket introuvable');
   await q("UPDATE tickets SET status='resolu' WHERE id=?", [t.id]);
-  if (t.client_user_id) await notify(t.client_user_id, `Ticket résolu : ${t.subject}`, '/dashboard/sav');
+  if (t.client_user_id) await notify(t.client_user_id, `Ticket résolu : ${t.subject}`, '/espace-client/support');
   res.json({ ok: true });
 }));
 

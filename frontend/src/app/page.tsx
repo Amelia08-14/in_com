@@ -103,7 +103,7 @@ export default function Home() {
               </ul>
             </nav>
             <div className="actions">
-              <a href="/dashboard" className="btn btn-line btn-sm hide-s">Espace client</a>
+              <a href="/espace-client" className="btn btn-line btn-sm hide-s">Espace client</a>
               <span data-cart-slot />
             </div>
           </div>
@@ -313,7 +313,7 @@ export default function Home() {
                 <dl>
                   <div><dt>Adresse</dt><dd>Alger, Algérie</dd></div>
                   <div><dt>Horaires</dt><dd>Du dimanche au jeudi, de 9 h à 17 h</dd></div>
-                  <div><dt>Déjà client</dt><dd><a href="/dashboard" className="link">Ouvrir mon espace client</a></dd></div>
+                  <div><dt>Déjà client</dt><dd><a href="/espace-client" className="link">Ouvrir mon espace client</a></dd></div>
                 </dl>
               </div>
               <ContactForm />
@@ -339,7 +339,7 @@ export default function Home() {
                 <li><a href="#expertises">Expertises</a></li>
                 <li><a href="#offres">Offres</a></li>
                 <li><a href="/suivi">Suivi de commande</a></li>
-                <li><a href="/dashboard">Espace client</a></li>
+                <li><a href="/espace-client">Espace client</a></li>
               </ul>
             </div>
           </div>

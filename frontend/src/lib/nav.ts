@@ -34,7 +34,6 @@ const myStats: NavItem = { href: '/dashboard/mon-reporting', label: 'Mon reporti
 const usersNav: NavItem = { href: '/dashboard/utilisateurs', label: 'Utilisateurs', icon: I.team };
 const leads: NavItem = { href: '/dashboard/demandes', label: 'Demandes du site', icon: I.inbox };
 const carts: NavItem = { href: '/dashboard/paniers', label: 'Paniers du site', icon: I.cart };
-const myRequests: NavItem = { href: '/dashboard/mes-demandes', label: 'Mes demandes de devis', icon: I.inbox };
 
 export const NAV: Record<string, NavItem[]> = {
   admin: [dash, univers, reporting, deals, cal, dossiers, clients, tasks, validation, gdTeam, sav, orders, carts, leads, usersNav],
@@ -50,5 +49,25 @@ export const NAV: Record<string, NavItem[]> = {
   media_buyer: [dash, { ...tasks, label: 'Mes tâches' }, { ...clients, label: 'Mes clients' }],
   community_manager: [dash, { ...validation, label: 'À publier' }, dossiers, { ...clients, label: 'Mes clients' }],
   recouvrement: [dash, orders, sav],
-  client: [dash, myRequests, { ...dossiers, label: 'Mes projets' }, { ...validation, label: 'À valider' }, { ...orders, label: 'Commander un extra' }, { ...sav, label: 'Support' }],
 };
+
+// Espace client (/espace-client) : séparé du CRM de l'équipe
+export const CLIENT_NAV: NavItem[] = [
+  { href: '/espace-client', label: 'Accueil', icon: I.home },
+  { href: '/espace-client/demandes', label: 'Mes demandes de devis', icon: I.inbox },
+  { href: '/espace-client/projets', label: 'Mes projets', icon: I.folder },
+  { href: '/espace-client/a-valider', label: 'À valider', icon: I.check },
+  { href: '/espace-client/extras', label: 'Commander un extra', icon: I.cart },
+  { href: '/espace-client/support', label: 'Support', icon: I.sav },
+];
+
+// Anciens liens de notification (/dashboard/...) reçus par un client → page équivalente de son espace
+const CLIENT_PATHS: Record<string, string> = {
+  dossiers: 'projets', projets: 'projets', validation: 'a-valider', commandes: 'extras', sav: 'support', 'mes-demandes': 'demandes',
+};
+export function clientLink(link?: string | null) {
+  if (!link) return '/espace-client';
+  if (link.startsWith('/espace-client')) return link;
+  const m = link.match(/^\/(?:dashboard|espace)\/([^/?#]+)/);
+  return m && CLIENT_PATHS[m[1]] ? `/espace-client/${CLIENT_PATHS[m[1]]}` : '/espace-client';
+}

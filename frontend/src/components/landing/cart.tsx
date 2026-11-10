@@ -125,7 +125,7 @@ function CartDrawer({ open, onClose, items, setItems, resume }: { open: boolean;
   const [user, setUser] = useState<User | null>(null);
   const panel = useRef<HTMLDivElement>(null);
 
-  // Le compte client (connexion faite sur /dashboard, même domaine) est relu à chaque ouverture
+  // Le compte client (connexion faite sur /espace-client, même domaine) est relu à chaque ouverture
   useEffect(() => { if (open) setUser(getToken() ? getUser() : null); }, [open]);
   useEffect(() => { if (resume) setStage('form'); }, [resume]);
   const signOut = () => { clearSession(); setUser(null); };
@@ -185,7 +185,7 @@ function CartDrawer({ open, onClose, items, setItems, resume }: { open: boolean;
             <p className="code">{code}</p>
             <p className="muted">Un conseiller vous appelle sous 24 h ouvrées pour confirmer votre commande. Gardez ce code : il vous permet de suivre chaque étape.</p>
             <a className="btn btn-primary btn-block" href={`/suivi/${code}`}>Suivre ma commande</a>
-            <a className="btn btn-ghost btn-block" href="/dashboard/mes-demandes">Voir toutes mes demandes</a>
+            <a className="btn btn-ghost btn-block" href="/espace-client/demandes">Voir toutes mes demandes</a>
           </div>
         ) : items.length === 0 ? (
           <div className="drawer-body empty">
@@ -234,8 +234,8 @@ function CartDrawer({ open, onClose, items, setItems, resume }: { open: boolean;
             <button type="button" className="back" onClick={() => setStage('cart')}>← Revenir au panier</button>
             <p className="gate-title">Un compte client est nécessaire pour envoyer votre demande.</p>
             <p className="muted">Il vous permet de recevoir votre devis, de suivre chaque commande et d’échanger avec votre conseiller. Votre panier reste enregistré pendant la création du compte.</p>
-            <a className="btn btn-accent btn-block" href={`/dashboard/inscription?next=${AUTH_NEXT}`}>Créer mon compte</a>
-            <a className="btn btn-ghost btn-block" href={`/dashboard/connexion?next=${AUTH_NEXT}`}>J’ai déjà un compte</a>
+            <a className="btn btn-accent btn-block" href={`/espace-client/inscription?next=${AUTH_NEXT}`}>Créer mon compte</a>
+            <a className="btn btn-ghost btn-block" href={`/espace-client/connexion?next=${AUTH_NEXT}`}>J’ai déjà un compte</a>
           </div>
         ) : (
           <form className="drawer-body form-drawer" onSubmit={submit}>
