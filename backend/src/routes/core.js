@@ -325,7 +325,65 @@ router.get('/dashboard', wrap(async (req, res) => {
   const kpis = [];
   const add = (label, value, hint, tone) => kpis.push({ label, value, hint, tone });
 
-  if (['admin', 'responsable_communication'].includes(u.role)) {
+  // Direction : vue d'ensemble de toute l'activité (commercial, site, production, paiements, équipe)
+  if (u.role === 'admin') {
+    const k = (label, value, hint = null, tone = null, link = null) => ({ label, value, hint, tone, link });
+    const month = "DATE_FORMAT(created_at,'%Y-%m')=DATE_FORMAT(CURDATE(),'%Y-%m')";
+    const pipe = await q('SELECT status, COUNT(*) n FROM dossiers GROUP BY status');
+    const unpaid = await count("SELECT COUNT(*) n FROM dossiers WHERE payment_status='non_paye'");
+    const waitingPay = await count("SELECT COUNT(*) n FROM dossiers WHERE payment_status='en_attente'");
+    const toAssign = await count("SELECT COUNT(*) n FROM deals WHERE status='a_attribuer'");
+    const newCarts = await count("SELECT COUNT(*) n FROM carts WHERE status='recue'");
+    const late = await count("SELECT COUNT(*) n FROM tasks WHERE due_date<CURDATE() AND status IN ('a_faire','en_cours','modification_demandee')");
+    const tickets = await count("SELECT COUNT(*) n FROM tickets WHERE status<>'resolu'");
+    const groups = [
+      { title: 'Commercial', kpis: [
+        k('Prospects dans l’Univers', await count("SELECT COUNT(*) n FROM prospects WHERE label<>'client'"), `${await count('SELECT COUNT(*) n FROM prospects WHERE created_at>=NOW()-INTERVAL 7 DAY')} nouveaux en 7 jours`, null, '/dashboard/univers'),
+        k('Appels et visites du jour', await count('SELECT COUNT(*) n FROM reports WHERE DATE(created_at)=CURDATE()'), `${await count(`SELECT COUNT(*) n FROM reports WHERE ${month}`)} ce mois`, null, '/dashboard/reporting'),
+        k('Deals à attribuer', toAssign, `${await count("SELECT COUNT(*) n FROM deals WHERE status IN ('attribue','programme','a_relancer')")} deals en cours`, toAssign ? 'warn' : null, '/dashboard/deals'),
+        k('Signés ce mois', await count(`SELECT COUNT(*) n FROM dossiers WHERE ${month}`), null, 'accent', '/dashboard/dossiers'),
+      ] },
+      { title: 'Site web', kpis: [
+        k('Paniers et devis à traiter', newCarts, `${await count(`SELECT COUNT(*) n FROM carts WHERE ${month}`)} reçus ce mois`, newCarts ? 'warn' : null, '/dashboard/paniers'),
+        k('Nouveaux comptes clients', await count("SELECT COUNT(*) n FROM users WHERE role='client' AND created_at>=NOW()-INTERVAL 7 DAY"), '7 derniers jours', null, '/dashboard/univers'),
+        k('Demandes de contact', await count('SELECT COUNT(*) n FROM contact_requests WHERE created_at>=NOW()-INTERVAL 7 DAY'), '7 derniers jours', null, '/dashboard/demandes'),
+      ] },
+      { title: 'Clients et paiements', kpis: [
+        k('Clients actifs', await count("SELECT COUNT(*) n FROM prospects WHERE label='client'"), null, null, '/dashboard/clients'),
+        k('Revenu récurrent', (await count("SELECT COALESCE(SUM(o.price_month),0) n FROM prospects p JOIN offers o ON o.id=p.offer_id WHERE p.label='client'")).toLocaleString('fr-FR') + ' DA', 'HT par mois, selon les formules des clients', null, '/dashboard/clients'),
+        k('Paiements en attente', waitingPay, 'dossiers à encaisser', waitingPay ? 'warn' : null, '/dashboard/dossiers'),
+        k('Non payés', unpaid, null, unpaid ? 'danger' : null, '/dashboard/dossiers'),
+      ] },
+      { title: 'Production', kpis: [
+        k('Dossiers en création', (pipe.find((p) => p.status === 'creation_en_cours')?.n) || 0, null, null, '/dashboard/dossiers?status=creation_en_cours'),
+        k('Tâches en retard', late, null, late ? 'warn' : null, '/dashboard/taches'),
+        k('Validation du 1er coup', await firstTimeRate(), 'conceptions validées sans modification', null, '/dashboard/equipe-gd'),
+        k('Tickets SAV ouverts', tickets, null, tickets ? 'warn' : null, '/dashboard/sav'),
+      ] },
+    ];
+    const team = await q(
+      `SELECT u.name, u.role, SUM(DATE(r.created_at)=CURDATE()) today, COUNT(r.id) month
+       FROM users u LEFT JOIN reports r ON r.user_id=u.id AND r.created_at>=DATE_FORMAT(CURDATE(),'%Y-%m-01')
+       WHERE u.active=1 AND u.role IN ('responsable_commercial','commercial_sedentaire','commercial_terrain') GROUP BY u.id ORDER BY month DESC`);
+    const production = await q(
+      `SELECT u.name, u.role,
+         SUM(t.due_date=CURDATE() AND t.status IN ('a_faire','en_cours','modification_demandee')) today,
+         SUM(t.due_date<CURDATE() AND t.status IN ('a_faire','en_cours','modification_demandee')) late,
+         SUM(t.status IN ('validee','publiee') AND t.updated_at>=DATE_FORMAT(CURDATE(),'%Y-%m-01')) done_month
+       FROM users u LEFT JOIN tasks t ON t.assigned_to=u.id
+       WHERE u.active=1 AND u.role IN ('graphiste','community_manager','photographe','developpeur','media_buyer') GROUP BY u.id ORDER BY late DESC, today DESC`);
+    // Fil d'activité : les derniers événements de toute la plateforme
+    const activity = await q(
+      `(SELECT h.created_at AS at, 'dossier' AS kind, p.name AS subject, h.status AS detail, u.name AS who
+          FROM dossier_history h JOIN dossiers d ON d.id=h.dossier_id JOIN prospects p ON p.id=d.prospect_id LEFT JOIN users u ON u.id=h.user_id)
+       UNION ALL (SELECT c.created_at, 'panier', COALESCE(c.company, c.name), c.code, cb.name FROM carts c LEFT JOIN users cb ON cb.id=c.created_by)
+       UNION ALL (SELECT r.created_at, 'reporting', p.name, r.reason, u.name FROM reports r JOIN prospects p ON p.id=r.prospect_id JOIN users u ON u.id=r.user_id)
+       UNION ALL (SELECT created_at, 'compte', COALESCE(company, name), account_type, NULL FROM users WHERE role='client')
+       UNION ALL (SELECT t.created_at, 'ticket', t.subject, t.department, NULL FROM tickets t)
+       ORDER BY at DESC LIMIT 15`);
+    return res.json({ groups, pipeline: pipe, team, production, activity });
+  }
+  if (u.role === 'responsable_communication') {
     const pipe = await q('SELECT status, COUNT(*) n FROM dossiers GROUP BY status');
     const by = Object.fromEntries(pipe.map((r) => [r.status, r.n]));
     add('Clients actifs', await count("SELECT COUNT(*) n FROM prospects WHERE label='client'"));
