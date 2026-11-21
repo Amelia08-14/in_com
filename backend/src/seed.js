@@ -31,7 +31,7 @@ const USERS = [
   ['Clinique El Feth (client)', 'client@incom.dz', 'client'],
 ];
 
-const { SECTORS, OFFERS, SERVICES } = require('./catalog');
+const { SECTORS, OFFERS, SERVICES, ALGER_COMMUNES, applyOfferSite } = require('./catalog');
 
 const PROSPECTS = [
   ['Clinique El Feth', 'Clinique', 'Hydra', 'client', 'premium'],
@@ -72,11 +72,13 @@ const dt = (d) => `${ymd(d)} ${String(d.getHours()).padStart(2, '0')}:00:00`;
   }
   const S = {};
   for (const s of SECTORS) S[s] = (await q('INSERT INTO sectors (name) VALUES (?)', [s])).insertId;
+  for (const s of ALGER_COMMUNES) await q('INSERT IGNORE INTO sectors (name) VALUES (?)', [s]);
   await q('INSERT INTO user_sectors VALUES (?,?),(?,?),(?,?),(?,?),(?,?),(?,?)', [
     U.terrain, S['Alger Centre'], U.terrain, S['Hydra'], U.terrain, S['Kouba'],
     U.terrain2, S['Bab Ezzouar'], U.terrain2, S['Chéraga'], U.terrain2, S['Blida']]);
   const O = {};
   for (const o of OFFERS) O[o[0]] = (await q('INSERT INTO offers (code, name, price_month, posts_month, stories_month, reels_month, features) VALUES (?,?,?,?,?,?,?)', o)).insertId;
+  await applyOfferSite(q);
   for (const [n, p] of SERVICES) await q('INSERT INTO services (name, price) VALUES (?,?)', [n, p]);
 
   const P = {};

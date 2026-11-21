@@ -38,6 +38,11 @@ function ReportForm({ onClose, onDone }: { onClose: () => void; onDone: () => vo
   const [docs, setDocs] = useState('');
   const [effects, setEffects] = useState<string[] | null>(null);
   const { data: sectors } = useData<any[]>('/sectors');
+  // Le responsable commercial (et la direction) déclare un appel ou une visite, comme les deux équipes
+  const manager = ['admin', 'responsable_commercial'].includes(me.role);
+  const [mode, setMode] = useState<'appel' | 'visite'>(me.role === 'commercial_terrain' ? 'visite' : 'appel');
+  const isVisit = mode === 'visite';
+  const reasons = isVisit ? REASONS.commercial_terrain : manager ? REASONS.responsable_commercial.filter((x) => !['promesse', 'a_eviter'].includes(x)) : (REASONS[me.role] || REASONS.admin);
 
   useEffect(() => {
     if (picked || name.length < 2) { setMatches([]); return; }
@@ -47,7 +52,7 @@ function ReportForm({ onClose, onDone }: { onClose: () => void; onDone: () => vo
 
   async function submit() {
     try {
-      const body: any = { reason, notes, documents_url: docs || undefined };
+      const body: any = { reason, notes, documents_url: docs || undefined, channel: mode };
       if (picked) body.prospect_id = picked.id;
       else body.prospect = { ...np, name };
       const r = await api('/reports', { body });
@@ -60,7 +65,7 @@ function ReportForm({ onClose, onDone }: { onClose: () => void; onDone: () => vo
 
   return (
     <Modal
-      title={me.role === 'commercial_terrain' ? 'Déclarer une visite' : 'Déclarer un appel'}
+      title={isVisit ? 'Déclarer une visite' : 'Déclarer un appel'}
       onClose={onClose}
       footer={effects ? <button className="btn btn-dark" onClick={onClose}>Fermer</button> : <>
         <button className="btn btn-ghost" onClick={onClose}>Annuler</button>
@@ -71,8 +76,14 @@ function ReportForm({ onClose, onDone }: { onClose: () => void; onDone: () => vo
         <div className="effects">{effects.map((e) => <div key={e}>✓ {e}</div>)}</div>
       ) : (
         <>
+          {manager && (
+            <div className="mode-switch" role="tablist" aria-label="Type de déclaration">
+              <button type="button" className={!isVisit ? 'on' : ''} onClick={() => { setMode('appel'); setReason(''); }}>Appel (sédentaire)</button>
+              <button type="button" className={isVisit ? 'on' : ''} onClick={() => { setMode('visite'); setReason(''); }}>Visite (terrain)</button>
+            </div>
+          )}
           <label className="field">
-            <span>Nom du {me.role === 'commercial_terrain' ? 'prospect' : 'client'}</span>
+            <span>Nom du {isVisit ? 'prospect' : 'client'}</span>
             <input className="input" value={name} autoFocus onChange={(e) => { setName(e.target.value); setPicked(null); setIsNew(false); }} placeholder="Commencez à taper…" />
           </label>
           {!picked && matches.length > 0 && (
@@ -110,7 +121,7 @@ function ReportForm({ onClose, onDone }: { onClose: () => void; onDone: () => vo
               </div>
               <div className="grid-2">
                 <label className="field"><span>Lien Google Maps</span><input className="input" onChange={(e) => setNp({ ...np, maps_url: e.target.value })} /></label>
-                {me.role !== 'commercial_terrain' ? (
+                {!isVisit ? (
                   <label className="field"><span>Pipeline d’origine</span>
                     <select className="select" value={np.source} onChange={(e) => setNp({ ...np, source: e.target.value })}>
                       <option value="cold_mailing">Cold mailing</option><option value="ads">Sponsoring / Ads</option><option value="sedentaire">Prospection sédentaire</option>
@@ -121,10 +132,10 @@ function ReportForm({ onClose, onDone }: { onClose: () => void; onDone: () => vo
             </>
           )}
           <label className="field">
-            <span>{me.role === 'commercial_terrain' ? 'Statut' : 'Raison de l’appel'}</span>
+            <span>{isVisit ? 'Statut de la visite' : 'Raison de l’appel'}</span>
             <select className="select" value={reason} onChange={(e) => setReason(e.target.value)}>
               <option value="">Choisir…</option>
-              {(REASONS[me.role] || REASONS.admin).map((r) => <option key={r} value={r}>{REASON_LABEL[r]}</option>)}
+              {reasons.map((r) => <option key={r} value={r}>{REASON_LABEL[r]}</option>)}
             </select>
           </label>
           {reason && <div className="notice">{RULES[reason]}</div>}
@@ -145,7 +156,7 @@ export default function Reporting() {
   const [period, setPeriod] = useState('');
   const { data: rows, reload } = useData<any[]>(`/reports${qs(f)}`, [f]);
   const isManager = ['admin', 'responsable_commercial'].includes(me.role);
-  const { data: team } = useData<any[]>(isManager ? '/users?role=commercial_sedentaire,commercial_terrain' : null);
+  const { data: team } = useData<any[]>(isManager ? '/users?role=commercial_sedentaire,commercial_terrain,responsable_commercial' : null);
   const [form, setForm] = useState(false);
   useEffect(() => { if (window.location.search.includes('new=1')) setForm(true); }, []);
 
@@ -164,7 +175,7 @@ export default function Reporting() {
       <PageHead
         title={isManager ? 'Reporting de l’équipe' : 'Mon reporting'}
         sub={isManager ? 'Tout ce que les commerciaux déclarent, jour après jour.' : `Tout ce que vous avez déclaré depuis votre intégration · ${todayCount} aujourd’hui.`}
-        actions={me.role !== 'admin' && <button className="btn btn-primary" onClick={() => setForm(true)}>{me.role === 'commercial_terrain' ? '+ Déclarer une visite' : '+ Déclarer un appel'}</button>}
+        actions={<button className="btn btn-primary" onClick={() => setForm(true)}>{me.role === 'commercial_terrain' ? '+ Déclarer une visite' : isManager ? '+ Déclarer un appel ou une visite' : '+ Déclarer un appel'}</button>}
       />
       <div className="filters">
         <select className="select" value={period} onChange={(e) => setPeriodF(e.target.value)}>

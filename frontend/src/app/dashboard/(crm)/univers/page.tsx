@@ -10,7 +10,7 @@ import { PROSPECT_LABEL, SOURCE_LABEL } from '@/lib/labels';
 export default function Univers() {
   const me = useMe();
   const [f, setF] = useState({ search: '', label: '', sector_id: '', source: '' });
-  const { data: rows, loading } = useData<any[]>(`/prospects${qs(f)}`, [f]);
+  const { data: rows, loading, reload } = useData<any[]>(`/prospects${qs(f)}`, [f]);
   const { data: sectors } = useData<any[]>('/sectors');
   const [open, setOpen] = useState<number | null>(null);
   const set = (k: string) => (e: any) => setF({ ...f, [k]: e.target.value });
@@ -56,7 +56,7 @@ export default function Univers() {
           </table>
         </div>
       )}
-      {open && <ProspectDrawer id={open} onClose={() => setOpen(null)} />}
+      {open && <ProspectDrawer id={open} onClose={() => setOpen(null)} onChanged={reload} />}
     </>
   );
 }

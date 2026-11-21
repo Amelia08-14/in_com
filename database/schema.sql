@@ -68,7 +68,13 @@ CREATE TABLE offers (
   posts_month INT NOT NULL DEFAULT 0,
   stories_month INT NOT NULL DEFAULT 0,
   reels_month INT NOT NULL DEFAULT 0,
-  features TEXT
+  features TEXT,
+  pitch VARCHAR(255) NULL,             -- accroche affichée sur le site
+  items TEXT NULL,                     -- une ligne par avantage affiché
+  gift VARCHAR(255) NULL,              -- cadeau affiché (vide = aucun)
+  featured TINYINT(1) NOT NULL DEFAULT 0,
+  active TINYINT(1) NOT NULL DEFAULT 1,
+  sort_order INT NOT NULL DEFAULT 0
 );
 
 -- ───────────── Univers (prospects & clients) ─────────────
@@ -158,6 +164,7 @@ CREATE TABLE dossiers (
   cc_id INT NULL,
   status ENUM('signe','paiement_confirme','creation_en_cours','en_attente_validation','modification_demandee','livre','publie') NOT NULL DEFAULT 'signe',
   payment_mode ENUM('bureau','terrain','virement') DEFAULT 'bureau',
+  payment_status ENUM('en_attente','paye','non_paye') NOT NULL DEFAULT 'en_attente',
   amount INT DEFAULT 0,
   payment_confirmed_at DATETIME NULL,
   validated_at DATETIME NULL,              -- validé par le client, en attente de publication CM
@@ -261,7 +268,9 @@ CREATE TABLE services (
   id INT AUTO_INCREMENT PRIMARY KEY,
   name VARCHAR(160) NOT NULL,
   price INT NOT NULL,
-  unit VARCHAR(40) DEFAULT 'unité'
+  unit VARCHAR(40) DEFAULT 'unité',
+  active TINYINT(1) NOT NULL DEFAULT 1,
+  sort_order INT NOT NULL DEFAULT 0
 );
 
 CREATE TABLE orders (
@@ -314,6 +323,7 @@ CREATE TABLE carts (
   message TEXT,
   prospect_id INT NULL,
   user_id INT NULL,                        -- compte client qui a envoyé le panier
+  created_by INT NULL,                     -- membre de l'équipe qui a saisi la demande de devis
   assigned_to INT NULL,
   status ENUM('recue','contactee','devis_envoye','confirmee','en_production','livree','annulee') NOT NULL DEFAULT 'recue',
   total_once INT NOT NULL DEFAULT 0,
@@ -322,6 +332,7 @@ CREATE TABLE carts (
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (prospect_id) REFERENCES prospects(id) ON DELETE SET NULL,
   CONSTRAINT fk_carts_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
+  CONSTRAINT fk_carts_creator FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
   FOREIGN KEY (assigned_to) REFERENCES users(id) ON DELETE SET NULL
 );
 

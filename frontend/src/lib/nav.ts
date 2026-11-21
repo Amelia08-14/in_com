@@ -33,22 +33,25 @@ const gdTeam: NavItem = { href: '/dashboard/equipe-gd', label: 'Équipe graphist
 const myStats: NavItem = { href: '/dashboard/mon-reporting', label: 'Mon reporting', icon: I.chart };
 const usersNav: NavItem = { href: '/dashboard/utilisateurs', label: 'Utilisateurs', icon: I.team };
 const leads: NavItem = { href: '/dashboard/demandes', label: 'Demandes du site', icon: I.inbox };
-const carts: NavItem = { href: '/dashboard/paniers', label: 'Paniers du site', icon: I.cart };
+const carts: NavItem = { href: '/dashboard/paniers', label: 'Paniers et devis', icon: I.cart };
+const team: NavItem = { href: '/dashboard/collaborateurs', label: 'Collaborateurs', icon: I.users };
+const site: NavItem = { href: '/dashboard/site', label: 'Site web', icon: I.globe };
+const myDossiers: NavItem = { ...dossiers, label: 'Mes dossiers' };
 
 export const NAV: Record<string, NavItem[]> = {
-  admin: [dash, univers, reporting, deals, cal, dossiers, clients, tasks, validation, gdTeam, sav, orders, carts, leads, usersNav],
-  responsable_commercial: [dash, univers, reporting, deals, cal, carts, leads, sav, orders],
-  commercial_sedentaire: [dash, univers, reporting, deals, cal, carts, sav, orders],
-  commercial_terrain: [dash, univers, reporting, deals, cal],
-  responsable_communication: [dash, dossiers, clients, tasks, validation, gdTeam, sav],
-  responsable_technique: [dash, validation, tasks, clients, gdTeam, sav],
-  charge_clientele: [dash, dossiers, validation, clients, sav],
-  graphiste: [dash, { ...tasks, label: 'Mes tâches' }, { ...clients, label: 'Mes clients' }, { ...validation, label: 'Suivi validation' }, myStats],
-  photographe: [dash, { ...tasks, label: 'Mes tâches' }, { ...clients, label: 'Mes clients' }, myStats],
-  developpeur: [dash, { ...tasks, label: 'Mes tâches' }, { ...clients, label: 'Mes clients' }, sav],
-  media_buyer: [dash, { ...tasks, label: 'Mes tâches' }, { ...clients, label: 'Mes clients' }],
-  community_manager: [dash, { ...validation, label: 'À publier' }, dossiers, { ...clients, label: 'Mes clients' }],
-  recouvrement: [dash, orders, sav],
+  admin: [dash, univers, reporting, deals, cal, dossiers, clients, tasks, validation, gdTeam, sav, orders, carts, leads, team, usersNav, site],
+  responsable_commercial: [dash, univers, reporting, deals, cal, carts, leads, sav, orders, team],
+  commercial_sedentaire: [dash, univers, reporting, deals, cal, carts, sav, orders, team],
+  commercial_terrain: [dash, univers, reporting, deals, cal, carts, team],
+  responsable_communication: [dash, dossiers, clients, tasks, validation, gdTeam, sav, team],
+  responsable_technique: [dash, validation, tasks, dossiers, clients, gdTeam, sav, team],
+  charge_clientele: [dash, dossiers, validation, clients, sav, team],
+  graphiste: [dash, { ...tasks, label: 'Mes tâches' }, myDossiers, { ...clients, label: 'Mes clients' }, { ...validation, label: 'Suivi validation' }, myStats, team],
+  photographe: [dash, { ...tasks, label: 'Mes tâches' }, myDossiers, { ...clients, label: 'Mes clients' }, myStats, team],
+  developpeur: [dash, { ...tasks, label: 'Mes tâches' }, myDossiers, { ...clients, label: 'Mes clients' }, sav, team],
+  media_buyer: [dash, { ...tasks, label: 'Mes tâches' }, myDossiers, { ...clients, label: 'Mes clients' }, team],
+  community_manager: [dash, { ...validation, label: 'À publier' }, dossiers, { ...clients, label: 'Mes clients' }, team],
+  recouvrement: [dash, orders, sav, team],
 };
 
 // Espace client (/espace-client) : séparé du CRM de l'équipe

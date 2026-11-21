@@ -136,6 +136,22 @@ sudo certbot --nginx -d VOTRE-DOMAINE.dz -d www.VOTRE-DOMAINE.dz
 
 Si `schema.sql` change, appliquer seulement le nouveau fichier de `database/migrations/` sur la base de production. Ne jamais réimporter `schema.sql`, qui efface les tables.
 
+## Notifications par e-mail (facultatif)
+
+Sans réglage, les notifications restent dans la cloche du CRM. Pour les recevoir aussi par e-mail (direction et clients par défaut), ajouter dans `backend/.env` :
+
+```
+SITE_URL=https://VOTRE-DOMAINE.dz
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=465
+SMTP_USER=adresse.qui.envoie@gmail.com
+SMTP_PASS=mot-de-passe-d-application
+MAIL_FROM="IN COMMUNICATION <adresse.qui.envoie@gmail.com>"
+NOTIFY_EMAIL_ROLES=admin,client
+```
+
+Avec Gmail ou Google Workspace, `SMTP_PASS` est un « mot de passe d'application » (compte Google, Sécurité, validation en deux étapes activée), pas le mot de passe du compte. Relancer ensuite l'API : `pm2 restart incom-api --update-env`.
+
 ## Sauvegarde de la base (recommandé)
 
 Ajouter dans `crontab -e`, pour une sauvegarde chaque nuit à 3 h :

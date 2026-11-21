@@ -74,7 +74,7 @@ async function checkLateAlerts() {
   for (const r of rows) {
     const msg = `Retard cumulé ≥ 3 jours pour ${r.name} (${r.late} tâches)`;
     const exists = await one('SELECT id FROM notifications WHERE message=? AND DATE(created_at)=CURDATE()', [msg]);
-    if (!exists) await notifyRole('responsable_technique', msg, '/dashboard/equipe-gd');
+    if (!exists) await notifyRole(['responsable_technique', 'admin'], msg, '/dashboard/equipe-gd');
   }
 }
 
@@ -121,13 +121,23 @@ router.get('/:id(\\d+)', wrap(async (req, res) => {
 }));
 
 // Créer une tâche manuellement (resp. technique / resp. communication)
+// Consigne précise donnée à un collaborateur, avec échéance (depuis Tâches ou depuis un dossier client)
 router.post('/', allow('responsable_technique', 'responsable_communication'), wrap(async (req, res) => {
-  const { prospect_id, assigned_to, type = 'conception', theme, brief, priority = 2, due_date } = req.body;
+  const { assigned_to, type = 'conception', theme, brief, priority = 2, due_date, dossier_id } = req.body;
+  let { prospect_id } = req.body;
+  if (dossier_id && !prospect_id) prospect_id = (await one('SELECT prospect_id FROM dossiers WHERE id=?', [dossier_id]))?.prospect_id;
   if (!prospect_id || !assigned_to) throw new HttpError(400, 'Client et intervenant obligatoires');
-  const r = await q('INSERT INTO tasks (prospect_id, assigned_to, type, theme, brief, priority, due_date) VALUES (?,?,?,?,?,?,?)',
-    [prospect_id, assigned_to, type, theme, brief, priority, due_date || ymd()]);
-  await log(r.insertId, req.user.id, 'creation_manuelle', 'a_faire');
-  await notify(assigned_to, `Nouvelle tâche : ${theme || type}`, '/dashboard/taches');
+  if (!String(theme || '').trim()) throw new HttpError(400, 'Indiquez l’intitulé de la tâche');
+  const who = await one('SELECT id, name FROM users WHERE id=? AND active=1', [assigned_to]);
+  if (!who) throw new HttpError(400, 'Intervenant invalide');
+  const client = await one('SELECT name FROM prospects WHERE id=?', [prospect_id]);
+  const r = await q('INSERT INTO tasks (prospect_id, dossier_id, assigned_to, type, theme, brief, priority, due_date) VALUES (?,?,?,?,?,?,?,?)',
+    [prospect_id, dossier_id || null, assigned_to, type, theme, brief || null, priority, due_date || ymd()]);
+  await log(r.insertId, req.user.id, 'creation_manuelle', 'a_faire', brief || null);
+  // Le collaborateur est toujours attaché au client, pour voir sa fiche et ses coordonnées
+  const role = (await one('SELECT role FROM users WHERE id=?', [assigned_to])).role;
+  await q('INSERT IGNORE INTO client_assignments (prospect_id, user_id, role, assigned_by) VALUES (?,?,?,?)', [prospect_id, assigned_to, role, req.user.id]);
+  await notify(assigned_to, `Nouvelle tâche (${client?.name || 'client'}) : ${theme}${due_date ? ` · pour le ${String(due_date).split('-').reverse().join('/')}` : ''}`, '/dashboard/taches');
   res.json({ id: r.insertId });
 }));
 

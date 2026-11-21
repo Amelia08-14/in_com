@@ -1,7 +1,7 @@
 'use client';
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useState } from 'react';
-import { Badge, Modal, PageHead, Progress, Tabs, useAction, useData, Empty } from '@/components/ui';
+import { Badge, Modal, PageHead, Progress, Tabs, useAction, useData, useToast, Empty } from '@/components/ui';
 import TaskModal from '@/components/TaskModal';
 import { api, qs, fmtDate } from '@/lib/api';
 import { useMe } from '@/lib/me';
@@ -86,6 +86,7 @@ function MyTasks() {
 
 function AllTasks() {
   const run = useAction();
+  const toast = useToast();
   const me = useMe();
   const [f, setF] = useState({ status: '', assigned_to: '', client_id: '', part: '' });
   const { data: rows, reload } = useData<any[]>(`/tasks${qs(f)}`, [f]);
@@ -99,7 +100,13 @@ function AllTasks() {
     <>
       <PageHead title="Tâches de production" sub="Le CRM découpe le quota mensuel de chaque client en tâches quotidiennes (jours ouvrés dimanche → jeudi)."
         actions={<>
-          {me.role !== 'responsable_communication' && <button className="btn btn-ghost" onClick={() => run(() => api('/tasks/generate', { method: 'POST' }), 'Tâches du jour générées', reload)}>Générer les tâches du jour</button>}
+          {me.role !== 'responsable_communication' && <button className="btn btn-ghost" onClick={async () => {
+            try {
+              const r = await api('/tasks/generate', { method: 'POST' });
+              toast(r.created ? `${r.created} tâche${r.created > 1 ? 's' : ''} créée${r.created > 1 ? 's' : ''} pour aujourd’hui` : 'Aucune nouvelle tâche : les quotas du jour sont déjà répartis, ou aucun client n’a de formule et de graphiste attribués.');
+              reload();
+            } catch (e: any) { toast(e.message, true); }
+          }}>Générer les tâches du jour</button>}
           <button className="btn btn-primary" onClick={() => setCreate(true)}>+ Nouvelle tâche</button>
         </>} />
       <div className="filters">

@@ -79,10 +79,20 @@ router.get('/prospects/:id', allow(...COMMERCIAL, 'responsable_communication', '
 router.patch('/prospects/:id', allow(...COMMERCIAL), wrap(async (req, res) => {
   await scopeProspect(req.user, req.params.id);
   const editable = ['name', 'contact_name', 'specialty', 'phone', 'email', 'maps_url', 'address', 'sector_id', 'priority'];
-  if (isManager(req.user)) editable.push('label', 'offer_id', 'documents_url');
+  if (isManager(req.user)) editable.push('label', 'offer_id', 'documents_url', 'source');
   const fields = Object.keys(req.body).filter((k) => editable.includes(k));
   if (!fields.length) throw new HttpError(400, 'Aucun champ modifiable');
-  await q(`UPDATE prospects SET ${fields.map((f) => `${f}=?`).join(', ')} WHERE id=?`, [...fields.map((f) => req.body[f]), req.params.id]);
+  if (fields.includes('name') && !String(req.body.name || '').trim()) throw new HttpError(400, 'Le nom est obligatoire');
+  const val = (f) => (req.body[f] === '' && ['sector_id', 'offer_id'].includes(f) ? null : req.body[f]);
+  await q(`UPDATE prospects SET ${fields.map((f) => `${f}=?`).join(', ')} WHERE id=?`, [...fields.map(val), req.params.id]);
+  res.json({ ok: true });
+}));
+
+// Suppression d'une fiche (direction, responsable commercial) : historique, deals et dossiers liés partent avec
+router.delete('/prospects/:id', allow('responsable_commercial'), wrap(async (req, res) => {
+  const p = await one('SELECT id, client_user_id FROM prospects WHERE id=?', [req.params.id]);
+  if (!p) throw new HttpError(404, 'Fiche introuvable');
+  await q('DELETE FROM prospects WHERE id=?', [p.id]);
   res.json({ ok: true });
 }));
 
@@ -108,14 +118,16 @@ async function createDossierFromSignature(prospectId, userId, documentsUrl) {
     [prospectId, p.offer_id, `${p.name} — ${offer ? 'Formule ' + offer.name : 'Prestation'}`, userId, offer ? offer.price_month : 0,
       (await one('SELECT role FROM users WHERE id=?', [userId])).role === 'commercial_terrain' ? 'terrain' : 'bureau']);
   await q("INSERT INTO dossier_history (dossier_id, user_id, status, note) VALUES (?,?, 'signe', 'Signature commerciale')", [r.insertId, userId]);
-  await notifyRole('responsable_communication', `Nouveau dossier signé : ${p.name} — paiement à vérifier`, '/dashboard/dossiers');
+  await notifyRole(['responsable_communication', 'admin'], `Nouveau dossier signé : ${p.name} — paiement à vérifier`, '/dashboard/dossiers');
   return r.insertId;
 }
 
 router.post('/reports', allow('commercial_sedentaire', 'commercial_terrain', 'responsable_commercial'), wrap(async (req, res) => {
   const u = req.user;
   const { prospect_id, prospect, reason, notes, documents_url } = req.body;
-  const channel = u.role === 'commercial_terrain' ? 'visite' : 'appel';
+  // Le responsable commercial (et la direction) déclare des appels comme des visites
+  const channel = u.role === 'commercial_terrain' ? 'visite'
+    : isManager(u) && ['appel', 'visite'].includes(req.body.channel) ? req.body.channel : 'appel';
   if (!reason) throw new HttpError(400, 'Raison obligatoire');
   if (reason === 'signe' && !documents_url) throw new HttpError(400, 'Documents obligatoires pour un signé (lien Drive ou photos : contrat, registre de commerce, agrément)');
 
@@ -127,7 +139,7 @@ router.post('/reports', allow('commercial_sedentaire', 'commercial_terrain', 're
     const r = await q(
       'INSERT INTO prospects (name, contact_name, specialty, phone, maps_url, address, sector_id, source, created_by) VALUES (?,?,?,?,?,?,?,?,?)',
       [prospect.name, prospect.contact_name, prospect.specialty, prospect.phone, prospect.maps_url, prospect.address, prospect.sector_id || null,
-        u.role === 'commercial_terrain' ? 'terrain' : (prospect.source || 'sedentaire'), u.id]);
+        channel === 'visite' ? 'terrain' : (prospect.source || 'sedentaire'), u.id]);
     pid = r.insertId;
     isNew = true;
   } else {
@@ -156,7 +168,7 @@ router.post('/reports', allow('commercial_sedentaire', 'commercial_terrain', 're
   if (reason === 'deal_terrain') {
     const d = await q("INSERT INTO deals (prospect_id, type, created_by, status, notes) VALUES (?, 'terrain', ?, 'a_attribuer', ?)", [pid, u.id, notes || null]);
     await q("INSERT INTO deal_history (deal_id, user_id, action) VALUES (?,?, 'creation')", [d.insertId, u.id]);
-    await notifyRole('responsable_commercial', `Deal terrain à attribuer : ${before.name}`, '/dashboard/deals');
+    await notifyRole(['responsable_commercial', 'admin'], `Deal terrain à attribuer : ${before.name}`, '/dashboard/deals');
     effects.push('Deal terrain créé : transmis au responsable pour attribution');
   }
   if (reason === 'deal_bureau') {
@@ -209,13 +221,35 @@ router.get('/deals', allow(...COMMERCIAL), wrap(async (req, res) => {
      WHERE ${where.join(' AND ')} ORDER BY FIELD(d.status,'a_attribuer','attribue','a_relancer','programme','gagne','perdu'), d.created_at DESC`, params));
 }));
 
+// Attribution : à un commercial de l'équipe, ou à soi-même pour le gérer comme un commercial
 router.post('/deals/:id/assign', allow('responsable_commercial'), wrap(async (req, res) => {
-  const { user_id } = req.body;
   const deal = await one('SELECT d.*, p.name FROM deals d JOIN prospects p ON p.id=d.prospect_id WHERE d.id=?', [req.params.id]);
   if (!deal) throw new HttpError(404, 'Deal introuvable');
-  await q("UPDATE deals SET assigned_to=?, status='attribue' WHERE id=?", [user_id, deal.id]);
-  await q("INSERT INTO deal_history (deal_id, user_id, action, detail) VALUES (?,?, 'attribution', ?)", [deal.id, req.user.id, `→ utilisateur ${user_id}`]);
-  await notify(user_id, `Nouveau deal attribué : ${deal.name}`, '/dashboard/deals');
+  const target = await one("SELECT id, name FROM users WHERE id=? AND active=1 AND role IN ('admin', ?)", [req.body.user_id, COMMERCIAL]);
+  if (!target) throw new HttpError(400, 'Commercial invalide');
+  const status = ['a_attribuer', 'a_relancer'].includes(deal.status) ? 'attribue' : deal.status;
+  await q('UPDATE deals SET assigned_to=?, status=? WHERE id=?', [target.id, status, deal.id]);
+  await q("INSERT INTO deal_history (deal_id, user_id, action, detail) VALUES (?,?, 'attribution', ?)", [deal.id, req.user.id, `→ ${target.name}`]);
+  if (target.id !== req.user.id) await notify(target.id, `Nouveau deal attribué : ${deal.name}`, '/dashboard/deals');
+  res.json({ ok: true });
+}));
+
+// Correction d'un deal par la direction ou le responsable commercial
+router.patch('/deals/:id', allow('responsable_commercial'), wrap(async (req, res) => {
+  const deal = await one('SELECT * FROM deals WHERE id=?', [req.params.id]);
+  if (!deal) throw new HttpError(404, 'Deal introuvable');
+  const b = req.body || {};
+  const STATUSES = ['a_attribuer', 'attribue', 'programme', 'gagne', 'perdu', 'a_relancer'];
+  if (b.status && !STATUSES.includes(b.status)) throw new HttpError(400, 'Statut invalide');
+  if (b.type && !['terrain', 'bureau'].includes(b.type)) throw new HttpError(400, 'Type invalide');
+  await q(`UPDATE deals SET status=COALESCE(?, status), type=COALESCE(?, type), notes=?, scheduled_at=? WHERE id=?`,
+    [b.status || null, b.type || null, b.notes ?? deal.notes, b.scheduled_at === '' ? null : (b.scheduled_at ? String(b.scheduled_at).replace('T', ' ') : deal.scheduled_at), deal.id]);
+  await q("INSERT INTO deal_history (deal_id, user_id, action, detail) VALUES (?,?, 'modification', ?)", [deal.id, req.user.id, b.status || null]);
+  res.json({ ok: true });
+}));
+
+router.delete('/deals/:id', allow('responsable_commercial'), wrap(async (req, res) => {
+  await q('DELETE FROM deals WHERE id=?', [req.params.id]);
   res.json({ ok: true });
 }));
 

@@ -17,7 +17,7 @@ const DEVIS = {
 };
 
 const STATUS = ['recue', 'contactee', 'devis_envoye', 'confirmee', 'en_production', 'livree', 'annulee'];
-const STAFF = ['admin', 'responsable_commercial', 'commercial_sedentaire'];
+const STAFF = ['admin', 'responsable_commercial', 'commercial_sedentaire', 'commercial_terrain'];
 
 // Code lisible au téléphone : pas de 0/O ni de 1/I
 const ALPHA = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -33,12 +33,12 @@ async function priceItems(raw) {
   for (const it of raw) {
     const qty = Math.min(50, Math.max(1, parseInt(it.quantity, 10) || 1));
     if (it.kind === 'offer') {
-      const o = await one('SELECT * FROM offers WHERE code=?', [String(it.ref)]);
+      const o = await one('SELECT * FROM offers WHERE code=? AND active=1', [String(it.ref)]);
       if (!o) throw new HttpError(400, 'Formule inconnue');
       const months = [3, 6].includes(Number(it.months)) ? Number(it.months) : 6;
       items.push({ kind: 'offer', ref: o.code, label: `Formule ${o.name}, ${months} mois`, months, quantity: 1, unit_price: o.price_month, total: o.price_month * months });
     } else if (it.kind === 'service') {
-      const s = await one('SELECT * FROM services WHERE id=?', [Number(it.ref)]);
+      const s = await one('SELECT * FROM services WHERE id=? AND active=1', [Number(it.ref)]);
       if (!s) throw new HttpError(400, 'Service inconnu');
       items.push({ kind: 'service', ref: String(s.id), label: s.name, months: null, quantity: qty, unit_price: s.price, total: s.price * qty });
     } else if (it.kind === 'devis') {
@@ -67,7 +67,7 @@ async function cartDetail(where, params) {
 // ───────── Public ─────────
 const pub = require('express').Router();
 
-pub.get('/public/services', wrap(async (req, res) => res.json(await q('SELECT id, name, price, unit FROM services ORDER BY price'))));
+pub.get('/public/services', wrap(async (req, res) => res.json(await q('SELECT id, name, price, unit FROM services WHERE active=1 ORDER BY sort_order, price'))));
 pub.get('/public/devis', (req, res) => res.json(Object.entries(DEVIS).map(([ref, label]) => ({ ref, label }))));
 
 // Envoi du panier : réservé aux comptes clients (inscription sur /dashboard/inscription).
@@ -109,7 +109,7 @@ pub.post('/public/carts', auth, wrap(async (req, res) => {
   await q("INSERT INTO cart_events (cart_id, status, note) VALUES (?, 'recue', 'Panier envoyé depuis le site')", [r.insertId]);
   await q('INSERT INTO contact_requests (name, company, phone, email, offer, message, prospect_id) VALUES (?,?,?,?,?,?,?)',
     [name, company, phone, email, offer ? offer.ref : 'panier', `Panier ${code} : ${items.map((i) => i.label).join(', ')}${message ? `\n${message}` : ''}`, p.insertId]);
-  await notifyRole(['commercial_sedentaire', 'responsable_commercial'], `Nouveau panier ${code} : ${company || name}`, '/dashboard/paniers');
+  await notifyRole(['commercial_sedentaire', 'responsable_commercial', 'admin'], `Nouveau panier ${code} : ${company || name}`, '/dashboard/paniers');
   res.json({ code });
 }));
 
@@ -139,14 +139,54 @@ pub.get('/public/carts/:code', wrap(async (req, res) => {
 const crm = require('express').Router();
 crm.use('/carts', auth, allow(...STAFF));
 
+// Demande de devis saisie par l'équipe commerciale pour un prospect ou un client de l'Univers.
+// Elle suit le même circuit que les paniers du site et donne au client un code de suivi.
+crm.post('/carts', wrap(async (req, res) => {
+  const b = req.body || {};
+  const p = await one('SELECT * FROM prospects WHERE id=?', [b.prospect_id]);
+  if (!p) throw new HttpError(400, 'Choisissez la fiche du prospect ou du client');
+  const items = await priceItems(b.items);
+  const once = items.filter((i) => i.kind === 'service').reduce((sum, i) => sum + i.total, 0);
+  const offer = items.find((i) => i.kind === 'offer');
+  if (offer) {
+    const o = await one('SELECT id FROM offers WHERE code=?', [offer.ref]);
+    await q('UPDATE prospects SET offer_id=? WHERE id=?', [o.id, p.id]);
+  }
+  const cu = p.client_user_id ? await one('SELECT email, phone FROM users WHERE id=?', [p.client_user_id]) : null;
+  let code;
+  for (let i = 0; i < 5; i++) {
+    code = newCode();
+    if (!(await one('SELECT id FROM carts WHERE code=?', [code]))) break;
+  }
+  const message = b.message ? String(b.message).slice(0, 2000) : null;
+  const r = await q(
+    `INSERT INTO carts (code, name, company, phone, email, message, prospect_id, user_id, created_by, assigned_to, total_once, total_monthly)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+    [code, p.contact_name || p.name, p.contact_name ? p.name : null, p.phone || cu?.phone || null, p.email || cu?.email || null, message,
+      p.id, p.client_user_id || null, req.user.id, req.user.id, once, offer ? offer.unit_price : 0]);
+  for (const i of items) {
+    await q('INSERT INTO cart_items (cart_id, kind, ref, label, months, quantity, unit_price, total) VALUES (?,?,?,?,?,?,?,?)',
+      [r.insertId, i.kind, i.ref, i.label, i.months, i.quantity, i.unit_price, i.total]);
+  }
+  await q("INSERT INTO cart_events (cart_id, status, note, user_id) VALUES (?, 'recue', 'Demande de devis saisie par votre conseiller', ?)", [r.insertId, req.user.id]);
+  if (p.client_user_id) await notify(p.client_user_id, `Votre demande de devis ${code} est enregistrée`, '/espace-client/demandes');
+  await notifyRole('admin', `Demande de devis ${code} saisie par ${req.user.name} : ${p.name}`, '/dashboard/paniers');
+  res.json({ code, id: r.insertId });
+}));
+
+crm.delete('/carts/:id', allow(), wrap(async (req, res) => {
+  await q('DELETE FROM carts WHERE id=?', [req.params.id]);
+  res.json({ ok: true });
+}));
+
 crm.get('/carts', wrap(async (req, res) => {
   const where = ['1=1'];
   const params = [];
   if (req.query.status) { where.push('c.status=?'); params.push(req.query.status); }
   res.json(await q(
-    `SELECT c.*, u.name AS assigned_name,
+    `SELECT c.*, u.name AS assigned_name, cb.name AS created_by_name,
        (SELECT GROUP_CONCAT(label ORDER BY id SEPARATOR ' · ') FROM cart_items WHERE cart_id=c.id) AS summary
-     FROM carts c LEFT JOIN users u ON u.id=c.assigned_to
+     FROM carts c LEFT JOIN users u ON u.id=c.assigned_to LEFT JOIN users cb ON cb.id=c.created_by
      WHERE ${where.join(' AND ')} ORDER BY c.created_at DESC`, params));
 }));
 
@@ -172,7 +212,7 @@ crm.post('/carts/:id/status', wrap(async (req, res) => {
 }));
 
 crm.post('/carts/:id/assign', allow('admin', 'responsable_commercial'), wrap(async (req, res) => {
-  const u = await one(`SELECT id FROM users WHERE id=? AND role IN ('commercial_sedentaire','responsable_commercial')`, [req.body.user_id]);
+  const u = await one(`SELECT id FROM users WHERE id=? AND active=1 AND role IN ('commercial_sedentaire','commercial_terrain','responsable_commercial','admin')`, [req.body.user_id]);
   if (!u) throw new HttpError(400, 'Commercial invalide');
   const c = await one('SELECT code FROM carts WHERE id=?', [req.params.id]);
   await q('UPDATE carts SET assigned_to=? WHERE id=?', [u.id, req.params.id]);

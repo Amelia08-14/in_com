@@ -8,7 +8,11 @@ const { ACTIVITIES } = require('../catalog');
 
 // ───────── Public ─────────
 router.get('/public/activities', (req, res) => res.json(ACTIVITIES));
-router.get('/public/offers', wrap(async (req, res) => res.json(await q('SELECT * FROM offers ORDER BY price_month'))));
+// Formules affichées sur le site, dans l'ordre et avec les textes choisis par l'administrateur
+router.get('/public/offers', wrap(async (req, res) => {
+  const rows = await q('SELECT code, name, price_month, pitch, items, gift, featured FROM offers WHERE active=1 ORDER BY sort_order, price_month');
+  res.json(rows.map((o) => ({ ...o, items: String(o.items || '').split('\n').map((l) => l.trim()).filter(Boolean), featured: !!o.featured })));
+}));
 
 router.post('/public/contact', wrap(async (req, res) => {
   const { name, company, phone, email, offer, message } = req.body;
@@ -17,7 +21,7 @@ router.post('/public/contact', wrap(async (req, res) => {
   const p = await q("INSERT INTO prospects (name, contact_name, phone, email, source) VALUES (?,?,?,?, 'site')", [company || name, name, phone, email]);
   await q('INSERT INTO contact_requests (name, company, phone, email, offer, message, prospect_id) VALUES (?,?,?,?,?,?,?)',
     [name, company, phone, email, offer, message, p.insertId]);
-  await notifyRole(['commercial_sedentaire', 'responsable_commercial'], `Nouvelle demande via le site : ${company || name}`, '/dashboard/univers');
+  await notifyRole(['commercial_sedentaire', 'responsable_commercial', 'admin'], `Nouvelle demande via le site : ${company || name}`, '/dashboard/univers');
   res.json({ ok: true });
 }));
 
@@ -52,15 +56,29 @@ router.post('/auth/register', limit(10, 60 * 60 * 1000), wrap(async (req, res) =
   // Fiche dans l'Univers, rattachée au compte : les commerciaux voient ce nouveau contact
   await q("INSERT INTO prospects (name, contact_name, specialty, phone, email, source, client_user_id) VALUES (?,?,?,?,?, 'site', ?)",
     [company || name, name, activity, phone, email, r.insertId]);
-  await notifyRole(['commercial_sedentaire', 'responsable_commercial'], `Nouveau compte ${type} sur le site : ${company || name}`, '/dashboard/univers');
+  await notifyRole(['commercial_sedentaire', 'responsable_commercial', 'admin'], `Nouveau compte ${type} sur le site : ${company || name}`, '/dashboard/univers');
   const user = { id: r.insertId, name, role: 'client', email };
   res.json({ token: sign(user), user });
 }));
 
-router.post('/auth/login', limit(20, 15 * 60 * 1000), wrap(async (req, res) => {
-  const { email, password } = req.body;
-  const u = await one('SELECT * FROM users WHERE email=? AND active=1', [String(email || '').toLowerCase().trim()]);
-  if (!u || !(await bcrypt.compare(password || '', u.password_hash))) throw new HttpError(401, 'Identifiants incorrects');
+// Connexion : seuls les échecs sont comptés, par adresse IP et par e-mail. Toute une équipe derrière
+// la même connexion internet du bureau peut donc se connecter sans se bloquer mutuellement.
+const failures = new Map();
+const LOGIN_WINDOW = 15 * 60 * 1000;
+router.post('/auth/login', wrap(async (req, res) => {
+  const email = String(req.body?.email || '').toLowerCase().trim();
+  const key = `${req.ip}|${email}`;
+  const now = Date.now();
+  const recent = (failures.get(key) || []).filter((t) => now - t < LOGIN_WINDOW);
+  if (recent.length >= 8) throw new HttpError(429, 'Trop d’essais avec cet e-mail. Réessayez dans 15 minutes ou demandez à la direction de réinitialiser le mot de passe.');
+  const u = await one('SELECT * FROM users WHERE email=?', [email]);
+  if (!u || !(await bcrypt.compare(String(req.body?.password || ''), u.password_hash))) {
+    failures.set(key, [...recent, now]);
+    if (failures.size > 10000) failures.clear();
+    throw new HttpError(401, 'E-mail ou mot de passe incorrect');
+  }
+  if (!u.active) throw new HttpError(403, 'Ce compte est désactivé. Contactez la direction.');
+  failures.delete(key);
   res.json({ token: sign(u), user: { id: u.id, name: u.name, role: u.role, email: u.email } });
 }));
 
@@ -139,7 +157,14 @@ router.post('/me/password', limit(10, 15 * 60 * 1000), wrap(async (req, res) => 
 
 router.get('/roles', (req, res) => res.json(ROLES));
 
+// Annuaire des collaborateurs : nom, rôle, e-mail et téléphone, visible par toute l'équipe
+router.get('/team', wrap(async (req, res) => {
+  if (req.user.role === 'client') throw new HttpError(403, 'Accès refusé');
+  res.json(await q("SELECT id, name, email, phone, role FROM users WHERE role<>'client' AND active=1 ORDER BY name"));
+}));
+
 router.get('/users', wrap(async (req, res) => {
+  if (req.user.role === 'client') throw new HttpError(403, 'Accès refusé');
   const { role } = req.query;
   const roles = role ? String(role).split(',') : null;
   const rows = await q(
@@ -152,21 +177,127 @@ router.get('/users', wrap(async (req, res) => {
 router.post('/users', allow('admin'), wrap(async (req, res) => {
   const { name, email, password, role, phone, daily_capacity, prospect_id } = req.body;
   if (!name || !email || !password || !ROLES[role]) throw new HttpError(400, 'Champs obligatoires manquants');
+  if (!EMAIL_RE.test(String(email).trim())) throw new HttpError(400, 'Adresse e-mail invalide');
+  if (String(password).length < 8) throw new HttpError(400, 'Mot de passe initial : 8 caractères minimum');
+  if (await one('SELECT id FROM users WHERE email=?', [email.toLowerCase().trim()])) throw new HttpError(409, 'Un compte existe déjà avec cet e-mail');
   const r = await q('INSERT INTO users (name, email, password_hash, role, phone, daily_capacity) VALUES (?,?,?,?,?,?)',
-    [name, email.toLowerCase().trim(), await bcrypt.hash(password, 10), role, phone || null, daily_capacity || 6]);
+    [String(name).trim(), email.toLowerCase().trim(), await bcrypt.hash(String(password), 10), role, phone || null, daily_capacity || 6]);
   if (role === 'client' && prospect_id) await q('UPDATE prospects SET client_user_id=? WHERE id=?', [r.insertId, prospect_id]);
   res.json({ id: r.insertId });
 }));
 
 router.patch('/users/:id', allow('admin'), wrap(async (req, res) => {
   const { name, role, phone, daily_capacity, active, password } = req.body;
-  await q('UPDATE users SET name=COALESCE(?,name), role=COALESCE(?,role), phone=COALESCE(?,phone), daily_capacity=COALESCE(?,daily_capacity), active=COALESCE(?,active) WHERE id=?',
-    [name ?? null, role ?? null, phone ?? null, daily_capacity ?? null, active ?? null, req.params.id]);
-  if (password) await q('UPDATE users SET password_hash=? WHERE id=?', [await bcrypt.hash(password, 10), req.params.id]);
+  const email = req.body.email ? String(req.body.email).toLowerCase().trim() : null;
+  if (role && !ROLES[role]) throw new HttpError(400, 'Rôle inconnu');
+  if (email) {
+    if (!EMAIL_RE.test(email)) throw new HttpError(400, 'Adresse e-mail invalide');
+    if (await one('SELECT id FROM users WHERE email=? AND id<>?', [email, req.params.id])) throw new HttpError(409, 'Cet e-mail est déjà utilisé');
+  }
+  if (Number(req.params.id) === req.user.id && (active === 0 || (role && role !== 'admin'))) throw new HttpError(400, 'Vous ne pouvez pas retirer vos propres droits');
+  await q('UPDATE users SET name=COALESCE(?,name), email=COALESCE(?,email), role=COALESCE(?,role), phone=COALESCE(?,phone), daily_capacity=COALESCE(?,daily_capacity), active=COALESCE(?,active) WHERE id=?',
+    [name ?? null, email, role ?? null, phone ?? null, daily_capacity ?? null, active ?? null, req.params.id]);
+  if (password) {
+    if (String(password).length < 8) throw new HttpError(400, 'Mot de passe : 8 caractères minimum');
+    await q('UPDATE users SET password_hash=? WHERE id=?', [await bcrypt.hash(String(password), 10), req.params.id]);
+    for (const k of failures.keys()) if (email && k.endsWith(`|${email}`)) failures.delete(k);
+  }
   res.json({ ok: true });
 }));
 
-router.get('/offers', wrap(async (req, res) => res.json(await q('SELECT * FROM offers ORDER BY price_month'))));
+// Suppression d'un compte. S'il a déjà un historique (deals, dossiers, tâches…), il est désactivé à la place.
+router.delete('/users/:id', allow('admin'), wrap(async (req, res) => {
+  if (Number(req.params.id) === req.user.id) throw new HttpError(400, 'Vous ne pouvez pas supprimer votre propre compte');
+  try {
+    await q('DELETE FROM users WHERE id=?', [req.params.id]);
+    res.json({ deleted: true });
+  } catch (e) {
+    if (e.code !== 'ER_ROW_IS_REFERENCED_2') throw e;
+    await q('UPDATE users SET active=0 WHERE id=?', [req.params.id]);
+    res.json({ deleted: false, deactivated: true });
+  }
+}));
+
+// ───────── Site web : formules et services affichés (direction) ─────────
+router.get('/site/offers', allow(), wrap(async (req, res) => res.json(await q('SELECT * FROM offers ORDER BY sort_order, price_month'))));
+
+const offerFields = (b) => ({
+  name: String(b.name || '').trim().slice(0, 80),
+  price_month: Math.max(0, parseInt(b.price_month, 10) || 0),
+  posts_month: Math.max(0, parseInt(b.posts_month, 10) || 0),
+  stories_month: Math.max(0, parseInt(b.stories_month, 10) || 0),
+  reels_month: Math.max(0, parseInt(b.reels_month, 10) || 0),
+  pitch: String(b.pitch || '').trim().slice(0, 255) || null,
+  items: String(b.items || '').split('\n').map((l) => l.trim()).filter(Boolean).join('\n') || null,
+  gift: String(b.gift || '').trim().slice(0, 255) || null,
+  featured: b.featured ? 1 : 0,
+  active: b.active === undefined ? 1 : (b.active ? 1 : 0),
+  sort_order: parseInt(b.sort_order, 10) || 0,
+});
+
+router.post('/site/offers', allow(), wrap(async (req, res) => {
+  const f = offerFields(req.body || {});
+  if (!f.name || !f.price_month) throw new HttpError(400, 'Nom et prix mensuel obligatoires');
+  const code = (String(req.body.code || f.name).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'offre').slice(0, 30);
+  if (await one('SELECT id FROM offers WHERE code=?', [code])) throw new HttpError(409, 'Une formule porte déjà ce nom');
+  const r = await q(`INSERT INTO offers (code, ${Object.keys(f).join(', ')}) VALUES (?, ${Object.keys(f).map(() => '?').join(', ')})`, [code, ...Object.values(f)]);
+  res.json({ id: r.insertId });
+}));
+
+router.put('/site/offers/:id', allow(), wrap(async (req, res) => {
+  const f = offerFields(req.body || {});
+  if (!f.name || !f.price_month) throw new HttpError(400, 'Nom et prix mensuel obligatoires');
+  await q(`UPDATE offers SET ${Object.keys(f).map((k) => `${k}=?`).join(', ')} WHERE id=?`, [...Object.values(f), req.params.id]);
+  res.json({ ok: true });
+}));
+
+// Une formule déjà souscrite par des clients est masquée du site au lieu d'être supprimée
+router.delete('/site/offers/:id', allow(), wrap(async (req, res) => {
+  const used = await one('SELECT (SELECT COUNT(*) FROM prospects WHERE offer_id=?) + (SELECT COUNT(*) FROM dossiers WHERE offer_id=?) AS n', [req.params.id, req.params.id]);
+  if (used.n > 0) {
+    await q('UPDATE offers SET active=0 WHERE id=?', [req.params.id]);
+    return res.json({ deleted: false, hidden: true });
+  }
+  await q('DELETE FROM offers WHERE id=?', [req.params.id]);
+  res.json({ deleted: true });
+}));
+
+router.get('/site/services', allow(), wrap(async (req, res) => res.json(await q('SELECT * FROM services ORDER BY sort_order, name'))));
+
+const serviceFields = (b) => ({
+  name: String(b.name || '').trim().slice(0, 160),
+  price: Math.max(0, parseInt(b.price, 10) || 0),
+  unit: String(b.unit || 'unité').trim().slice(0, 40) || 'unité',
+  active: b.active === undefined ? 1 : (b.active ? 1 : 0),
+  sort_order: parseInt(b.sort_order, 10) || 0,
+});
+
+router.post('/site/services', allow(), wrap(async (req, res) => {
+  const f = serviceFields(req.body || {});
+  if (!f.name || !f.price) throw new HttpError(400, 'Nom et prix obligatoires');
+  const r = await q(`INSERT INTO services (${Object.keys(f).join(', ')}) VALUES (${Object.keys(f).map(() => '?').join(', ')})`, Object.values(f));
+  res.json({ id: r.insertId });
+}));
+
+router.put('/site/services/:id', allow(), wrap(async (req, res) => {
+  const f = serviceFields(req.body || {});
+  if (!f.name || !f.price) throw new HttpError(400, 'Nom et prix obligatoires');
+  await q(`UPDATE services SET ${Object.keys(f).map((k) => `${k}=?`).join(', ')} WHERE id=?`, [...Object.values(f), req.params.id]);
+  res.json({ ok: true });
+}));
+
+router.delete('/site/services/:id', allow(), wrap(async (req, res) => {
+  try {
+    await q('DELETE FROM services WHERE id=?', [req.params.id]);
+    res.json({ deleted: true });
+  } catch (e) {
+    if (e.code !== 'ER_ROW_IS_REFERENCED_2') throw e;
+    await q('UPDATE services SET active=0 WHERE id=?', [req.params.id]);
+    res.json({ deleted: false, hidden: true });
+  }
+}));
+
+router.get('/offers', wrap(async (req, res) => res.json(await q('SELECT * FROM offers ORDER BY sort_order, price_month'))));
 
 router.get('/clients', wrap(async (req, res) => {
   res.json(await q("SELECT p.id, p.name, o.name AS offer FROM prospects p LEFT JOIN offers o ON o.id=p.offer_id WHERE p.label='client' ORDER BY p.name"));

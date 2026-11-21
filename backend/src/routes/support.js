@@ -52,7 +52,7 @@ router.post('/tickets', wrap(async (req, res) => {
   const r = await q('INSERT INTO tickets (prospect_id, department, subject, message, assigned_to, created_by) VALUES (?,?,?,?,?,?)',
     [prospectId, department, subject, message || null, assigned, u.id]);
   if (assigned) await notify(assigned, `Nouveau ticket SAV : ${subject}`, '/dashboard/sav');
-  else await notifyRole(DEPT_ROLES[department]?.[0] || 'admin', `Ticket SAV à attribuer : ${subject}`, '/dashboard/sav');
+  else await notifyRole([DEPT_ROLES[department]?.[0] || 'admin', 'admin'], `Ticket SAV à attribuer : ${subject}`, '/dashboard/sav');
   res.json({ id: r.insertId });
 }));
 
@@ -93,7 +93,7 @@ router.post('/orders', allow('client'), wrap(async (req, res) => {
   if (!s) throw new HttpError(400, 'Service invalide');
   const qty = Math.max(1, Number(req.body.quantity) || 1);
   const r = await q('INSERT INTO orders (prospect_id, service_id, quantity, price, note) VALUES (?,?,?,?,?)', [p.id, s.id, qty, s.price * qty, req.body.note || null]);
-  await notifyRole(['commercial_sedentaire', 'responsable_commercial'], `Commande extra : ${p.name} — ${s.name}`, '/dashboard/commandes');
+  await notifyRole(['commercial_sedentaire', 'responsable_commercial', 'admin'], `Commande extra : ${p.name} — ${s.name}`, '/dashboard/commandes');
   res.json({ id: r.insertId });
 }));
 

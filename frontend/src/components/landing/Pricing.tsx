@@ -1,12 +1,17 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import { AddButton, fmt } from './cart';
+import { API_URL } from '@/lib/api';
 
-const PLANS = [
+type Plan = { code: string; name: string; price: number; pitch?: string | null; items: string[]; gift?: string | null; featured?: boolean };
+
+// Affichage immédiat avant la réponse de l'API. Les formules réellement affichées viennent du CRM
+// (menu « Site web » de la direction) : prix, textes, cadeau, ordre, formules masquées.
+const FALLBACK: Plan[] = [
   {
     code: 'essentiel', name: 'Essentiel', price: 15000, pitch: 'Pour exister proprement sur les réseaux.',
     items: ['8 posts sur Facebook et Instagram', '15 stories', 'Calendrier éditorial', 'Rapport de performance'],
-    gift: 'Certification de votre fiche Google offerte',
+    gift: null,
   },
   {
     code: 'pro', name: 'Pro', price: 35000, pitch: 'Pour animer, répondre et faire de la publicité.',
@@ -41,6 +46,14 @@ function Rolling({ value }: { value: number }) {
 
 export default function Pricing() {
   const [months, setMonths] = useState(6);
+  const [plans, setPlans] = useState<Plan[]>(FALLBACK);
+  useEffect(() => {
+    fetch(`${API_URL}/public/offers`).then((r) => (r.ok ? r.json() : null)).then((rows) => {
+      if (Array.isArray(rows) && rows.length) {
+        setPlans(rows.map((o) => ({ code: o.code, name: o.name, price: o.price_month, pitch: o.pitch, items: o.items, gift: o.gift, featured: o.featured })));
+      }
+    }).catch(() => {});
+  }, []);
   return (
     <>
       <div className="seg" role="tablist" aria-label="Durée d’engagement" data-on={months}>
@@ -49,18 +62,18 @@ export default function Pricing() {
         <button type="button" role="tab" aria-selected={months === 6} onClick={() => setMonths(6)}>6 mois, recommandé</button>
       </div>
       <div className="plans">
-        {PLANS.map((p, i) => (
+        {plans.map((p, i) => (
           <article key={p.code} className={`plan ${p.featured ? 'featured' : ''}`} data-reveal style={{ ['--i' as string]: i }}>
             <div className="plan-glow" aria-hidden="true" />
             <div className="plan-head">
               <h3>{p.name}</h3>
               {p.featured && <span className="ribbon-tag">Meilleure valeur</span>}
             </div>
-            <p className="pitch">{p.pitch}</p>
+            {p.pitch && <p className="pitch">{p.pitch}</p>}
             <p className="price"><Rolling value={p.price} /><span>DA / mois HT</span></p>
             <p className="per">Soit <b><Rolling value={p.price * months} /> DA</b> sur {months} mois, environ {fmt(Math.round(p.price / 30))} DA par jour</p>
             <ul>{p.items.map((it) => <li key={it}>{it}</li>)}</ul>
-            <p className="gift"><span aria-hidden="true">✦</span> {p.gift}</p>
+            {p.gift && <p className="gift"><span aria-hidden="true">✦</span> {p.gift}</p>}
             <AddButton
               item={{ kind: 'offer', ref: p.code, label: `Formule ${p.name}`, months, unit_price: p.price }}
               label={`Choisir ${p.name}`}

@@ -1,18 +1,49 @@
 'use client';
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useEffect, useState } from 'react';
-import { Badge, PageHead, Tabs, useAction, useData, Empty } from '@/components/ui';
+import { Badge, Modal, PageHead, Tabs, useAction, useData, Empty } from '@/components/ui';
 import { OutcomeModal, ScheduleModal } from '@/components/DealModals';
 import { api, fmtDate } from '@/lib/api';
 import { useMe } from '@/lib/me';
 import { DEAL_STATUS } from '@/lib/labels';
+
+// Correction d'un deal par la direction ou le responsable commercial
+function EditDeal({ deal, onClose, onDone }: { deal: any; onClose: () => void; onDone: () => void }) {
+  const run = useAction();
+  const [f, setF] = useState<any>({ status: deal.status, type: deal.type, notes: deal.notes || '', scheduled_at: deal.scheduled_at ? String(deal.scheduled_at).replace(' ', 'T').slice(0, 16) : '' });
+  const set = (k: string) => (e: any) => setF({ ...f, [k]: e.target.value });
+  const remove = () => {
+    if (!confirm(`Supprimer le deal ${deal.prospect_name} ? Cette action est définitive.`)) return;
+    run(() => api(`/deals/${deal.id}`, { method: 'DELETE' }), 'Deal supprimé', () => { onDone(); onClose(); });
+  };
+  return (
+    <Modal title={`Deal · ${deal.prospect_name}`} onClose={onClose}
+      footer={<>
+        <button className="btn btn-ghost danger-text" style={{ marginRight: 'auto' }} onClick={remove}>Supprimer</button>
+        <button className="btn btn-ghost" onClick={onClose}>Annuler</button>
+        <button className="btn btn-primary" onClick={() => run(() => api(`/deals/${deal.id}`, { method: 'PATCH', body: f }), 'Deal modifié', () => { onDone(); onClose(); })}>Enregistrer</button>
+      </>}>
+      <div className="grid-2">
+        <label className="field"><span>Statut</span>
+          <select className="select" value={f.status} onChange={set('status')}>{Object.entries(DEAL_STATUS).map(([k, [l]]) => <option key={k} value={k}>{l}</option>)}</select>
+        </label>
+        <label className="field"><span>Type</span>
+          <select className="select" value={f.type} onChange={set('type')}><option value="terrain">Terrain</option><option value="bureau">Bureau</option></select>
+        </label>
+        <label className="field"><span>Rendez-vous</span><input className="input" type="datetime-local" value={f.scheduled_at} onChange={set('scheduled_at')} /></label>
+      </div>
+      <label className="field"><span>Notes</span><textarea className="textarea" value={f.notes} onChange={set('notes')} /></label>
+    </Modal>
+  );
+}
 
 export default function Deals() {
   const me = useMe();
   const run = useAction();
   const isManager = ['admin', 'responsable_commercial'].includes(me.role);
   const { data: rows, reload } = useData<any[]>('/deals');
-  const { data: terrain } = useData<any[]>(isManager ? '/users?role=commercial_terrain' : null);
+  const { data: team } = useData<any[]>(isManager ? '/users?role=commercial_terrain,commercial_sedentaire,responsable_commercial' : null);
+  const [edit, setEdit] = useState<any>(null);
   const [tab, setTab] = useState('actifs');
   const [sched, setSched] = useState<any>(null);
   const [out, setOut] = useState<any>(null);
@@ -33,7 +64,7 @@ export default function Deals() {
     <>
       <PageHead
         title="Deals"
-        sub={isManager ? 'Attribuez les deals terrain aux commerciaux et suivez leur issue.'
+        sub={isManager ? 'Attribuez chaque deal à un commercial ou prenez-le en charge vous-même, puis suivez son issue.'
           : me.role === 'commercial_terrain' ? 'Les deals que votre responsable vous attribue.' : 'Les deals nés de vos appels, vos deals bureau et ceux à relancer.'}
       />
       <Tabs value={tab} onChange={setTab} items={[
@@ -54,22 +85,24 @@ export default function Deals() {
                   <td><Badge map={DEAL_STATUS} value={d.status} /></td>
                   <td>{d.created_by_name}<span className="sub">{fmtDate(d.created_at)}</span></td>
                   <td>
-                    {isManager && d.type === 'terrain' && ['a_attribuer', 'attribue', 'a_relancer'].includes(d.status) ? (
-                      <select className="select" style={{ height: 32, minWidth: 150 }} value={d.assigned_to || ''}
-                        onChange={(e) => run(() => api(`/deals/${d.id}/assign`, { body: { user_id: e.target.value } }), 'Deal attribué', reload)}>
+                    {isManager && !['gagne', 'perdu'].includes(d.status) ? (
+                      <select className="select" style={{ height: 32, minWidth: 170 }} value={d.assigned_to || ''}
+                        onChange={(e) => e.target.value && run(() => api(`/deals/${d.id}/assign`, { body: { user_id: e.target.value } }), Number(e.target.value) === me.id ? 'Deal pris en charge' : 'Deal attribué', reload)}>
                         <option value="">Choisir…</option>
-                        {terrain?.map((u) => <option key={u.id} value={u.id}>{u.name} {u.sectors ? `(${u.sectors})` : ''}</option>)}
+                        <option value={me.id}>Moi ({me.name})</option>
+                        {team?.filter((u) => u.id !== me.id).map((u) => <option key={u.id} value={u.id}>{u.name} · {u.role === 'commercial_terrain' ? 'terrain' : u.role === 'commercial_sedentaire' ? 'sédentaire' : 'responsable'}{u.sectors ? ` (${u.sectors})` : ''}</option>)}
                       </select>
                     ) : (d.assigned_name || '—')}
                   </td>
                   <td>{d.scheduled_at ? fmtDate(d.scheduled_at, true) : '—'}</td>
                   <td className="row-actions">
-                    {['attribue', 'a_relancer'].includes(d.status) && (d.assigned_to === me.id || d.created_by === me.id) && (
+                    {['attribue', 'a_relancer'].includes(d.status) && (d.assigned_to === me.id || d.created_by === me.id || isManager) && (
                       <button className="btn btn-dark btn-xs" onClick={() => setSched(d)}>Programmer</button>
                     )}
-                    {d.status === 'programme' && d.assigned_to === me.id && (
+                    {d.status === 'programme' && (d.assigned_to === me.id || isManager) && (
                       <button className="btn btn-primary btn-xs" onClick={() => setOut(d)}>Issue</button>
                     )}
+                    {isManager && <button className="btn btn-ghost btn-xs" onClick={() => setEdit(d)}>Modifier</button>}
                   </td>
                 </tr>
               ))}
@@ -79,6 +112,7 @@ export default function Deals() {
       )}
       {sched && <ScheduleModal deal={sched} onClose={() => setSched(null)} onDone={reload} />}
       {out && <OutcomeModal deal={out} onClose={() => setOut(null)} onDone={reload} />}
+      {edit && <EditDeal deal={edit} onClose={() => setEdit(null)} onDone={reload} />}
     </>
   );
 }

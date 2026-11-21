@@ -102,3 +102,7 @@ export const CART_STATUS: L = {
   livree: ['Livrée', 'ok'],
   annulee: ['Annulée', 'neutral'],
 };
+
+export const PAYMENT_STATUS: L = {
+  en_attente: ['Paiement en attente', 'warn'], paye: ['Payé', 'ok'], non_paye: ['Non payé', 'danger'],
+};

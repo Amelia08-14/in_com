@@ -51,6 +51,14 @@ Sur la landing, le visiteur compose un panier : une formule (3 ou 6 mois), des s
 
 Règles automatiques implémentées (d'après les workflows) : passage en Qualifié (déjà prospecté par un autre commercial / plus de 2 visites), deal terrain → responsable → commercial terrain, deal bureau auto-attribué, documents obligatoires pour un Signé, issue de deal copiée dans le reporting, retour des deals « à relancer » au créateur, aucune production sans paiement confirmé, quotas mensuels découpés en tâches quotidiennes (dimanche → jeudi), report des tâches en retard, alerte à 3 jours de retard cumulé, ratio de modifications (alerte à 30 %), réattribution forcée, notifications CRM.
 
+## Retours de novembre 2026 (migration `005_audit_novembre.sql`)
+
+- **Commercial** : la direction et le responsable commercial modifient et suppriment les fiches de l'Univers et les deals, s'attribuent un deal pour le gérer eux-mêmes, et déclarent des appels comme des visites. Toute l'équipe commerciale saisit des **demandes de devis** (menu Paniers et devis). Les 57 communes d'Alger sont disponibles comme secteurs.
+- **Collaborateurs** : annuaire de toute l'équipe (rôle, e-mail, téléphone) visible par chacun.
+- **Dossiers** : formule, montant et statut de paiement (en attente, payé, non payé) modifiables ; retour à une étape précédente avec une raison dans l'historique ; coordonnées du client visibles par l'équipe attribuée ; tâches précises (intitulé, consigne, échéance) données depuis le dossier.
+- **Direction** : modification complète des comptes (e-mail, rôle, nouveau mot de passe), suppression ; menu **Site web** pour les formules (prix, textes, cadeau, ordre, masquer) et les services à la carte ; suppression des paniers et des dossiers ; notifications des événements clés dans le CRM et par e-mail (voir `deploy/DEPLOY.md`).
+- **Connexion** : seuls les échecs sont comptés, par adresse IP et par e-mail, pour qu'une équipe derrière la même connexion du bureau ne se bloque pas.
+
 ## Points à valider
 
 - Prix des services extra (`backend/src/seed.js`, table `services`) : valeurs indicatives.

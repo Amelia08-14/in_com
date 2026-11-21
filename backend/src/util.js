@@ -1,10 +1,16 @@
 const { q } = require('./db');
+const { sendNotificationEmail } = require('./mailer');
 
-// Notification CRM (l'envoi e-mail pourra être branché ici plus tard : SMTP / WhatsApp)
+// Notification CRM (cloche) + e-mail pour les rôles configurés (voir mailer.js)
 async function notify(userIds, message, link = null) {
   const ids = [...new Set([].concat(userIds).filter(Boolean))];
   for (const id of ids) {
     await q('INSERT INTO notifications (user_id, message, link) VALUES (?,?,?)', [id, message, link]);
+  }
+  if (ids.length && process.env.SMTP_HOST) {
+    const users = await q('SELECT id, name, email, role FROM users WHERE active=1 AND id IN (?)', [ids]);
+    // L'envoi ne bloque jamais l'action en cours
+    for (const u of users) sendNotificationEmail(u, message, link);
   }
 }
 

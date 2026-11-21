@@ -6,7 +6,7 @@
 require('dotenv').config();
 const bcrypt = require('bcryptjs');
 const { pool, q, one } = require('./db');
-const { SECTORS, OFFERS, SERVICES } = require('./catalog');
+const { ALGER_COMMUNES, OFFERS, SERVICES, applyOfferSite } = require('./catalog');
 
 (async () => {
   const { ADMIN_NAME, ADMIN_EMAIL, ADMIN_PASSWORD } = process.env;
@@ -22,12 +22,11 @@ const { SECTORS, OFFERS, SERVICES } = require('./catalog');
   if ((await one('SELECT COUNT(*) AS n FROM services')).n === 0) {
     for (const [n, p] of SERVICES) await q('INSERT INTO services (name, price) VALUES (?,?)', [n, p]);
   }
-  if ((await one('SELECT COUNT(*) AS n FROM sectors')).n === 0) {
-    for (const s of SECTORS) await q('INSERT INTO sectors (name) VALUES (?)', [s]);
-  }
+  await applyOfferSite(q);
+  for (const s of ALGER_COMMUNES) await q('INSERT IGNORE INTO sectors (name) VALUES (?)', [s]);
   const hash = await bcrypt.hash(ADMIN_PASSWORD, 12);
   await q("INSERT INTO users (name, email, password_hash, role) VALUES (?,?,?, 'admin')", [ADMIN_NAME, ADMIN_EMAIL.toLowerCase().trim(), hash]);
 
-  console.log(`Base prête : ${OFFERS.length} formules, ${SERVICES.length} services, ${SECTORS.length} secteurs, compte Direction ${ADMIN_EMAIL}`);
+  console.log(`Base prête : ${OFFERS.length} formules, ${SERVICES.length} services, ${ALGER_COMMUNES.length} communes, compte Direction ${ADMIN_EMAIL}`);
   await pool.end();
 })().catch(async (e) => { console.error('Erreur :', e.message); await pool.end(); process.exit(1); });
