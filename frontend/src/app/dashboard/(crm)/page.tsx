@@ -1,26 +1,15 @@
 'use client';
 /* eslint-disable @typescript-eslint/no-explicit-any */
+import { useState } from 'react';
 import Link from 'next/link';
 import { Kpi, useData, Empty } from '@/components/ui';
 import { useMe } from '@/lib/me';
 import { fmtDate } from '@/lib/api';
-import { DOSSIER_STATUS, REASON_LABEL, ROLE_LABELS } from '@/lib/labels';
+import { DOSSIER_STATUS, ROLE_LABELS } from '@/lib/labels';
+import AdminDashboard from '@/components/AdminDashboard';
 
-// Phrase lisible pour chaque événement du fil d'activité de la direction
-function activityText(a: any) {
-  switch (a.kind) {
-    case 'dossier': return a.detail === 'valide' ? `${a.subject} : validé par le client` : `${a.subject} : ${(DOSSIER_STATUS[a.detail]?.[0] || a.detail).toLowerCase()}`;
-    case 'panier': return a.who ? `Demande de devis ${a.detail} saisie pour ${a.subject}` : `Panier ${a.detail} reçu du site : ${a.subject}`;
-    case 'reporting': return `${REASON_LABEL[a.detail] || a.detail} : ${a.subject}`;
-    case 'compte': return `Nouveau compte ${a.detail || 'client'} : ${a.subject}`;
-    case 'ticket': return `Ticket SAV (${a.detail}) : ${a.subject}`;
-    default: return a.subject;
-  }
-}
-const KIND_LABEL: Record<string, string> = { dossier: 'Dossier', panier: 'Site', reporting: 'Commercial', compte: 'Compte', ticket: 'SAV' };
 
 const QUICK: Record<string, [string, string][]> = {
-  admin: [['/dashboard/dossiers', 'Dossiers clients'], ['/dashboard/paniers', 'Paniers et devis'], ['/dashboard/site', 'Site web']],
   commercial_sedentaire: [['/dashboard/reporting?new=1', 'Déclarer un appel'], ['/dashboard/deals', 'Mes deals'], ['/dashboard/commandes', 'Commandes à valider']],
   commercial_terrain: [['/dashboard/reporting?new=1', 'Déclarer une visite'], ['/dashboard/calendrier', 'Mes RDV'], ['/dashboard/univers', 'Mon secteur']],
   responsable_commercial: [['/dashboard/deals?status=a_attribuer', 'Attribuer les deals'], ['/dashboard/reporting', 'Reporting équipe'], ['/dashboard/demandes', 'Demandes du site']],
@@ -35,7 +24,10 @@ const QUICK: Record<string, [string, string][]> = {
 
 export default function Dashboard() {
   const me = useMe();
-  const { data } = useData<any>('/dashboard');
+  const [period, setPeriod] = useState(30);
+  const isAdmin = me.role === 'admin';
+  const { data } = useData<any>(isAdmin ? `/dashboard?period=${period}` : '/dashboard', [period]);
+  if (isAdmin) return <AdminDashboard data={data?.admin ? data : null} period={period} setPeriod={setPeriod} name={me.name} />;
   const quick = QUICK[me.role] || QUICK.graphiste;
   const hour = new Date().getHours();
 
@@ -56,36 +48,6 @@ export default function Dashboard() {
       {data?.kpis && (
         <div className="kpis">
           {data.kpis.map((k: any) => <Kpi key={k.label} {...k} />)}
-        </div>
-      )}
-
-      {data?.groups?.map((g: any) => (
-        <section key={g.title} className="kpi-group">
-          <h2>{g.title}</h2>
-          <div className="kpis">
-            {g.kpis.map((k: any) => (
-              <Link key={k.label} href={k.link || '#'} className="kpi-link"><Kpi label={k.label} value={k.value} hint={k.hint} tone={k.tone} /></Link>
-            ))}
-          </div>
-        </section>
-      ))}
-
-      {data?.activity && (
-        <div className="card">
-          <h2>Activité récente</h2>
-          {data.activity.length === 0 ? <Empty>Rien pour l’instant.</Empty> : (
-            <table className="t">
-              <tbody>
-                {data.activity.map((a: any, i: number) => (
-                  <tr key={i}>
-                    <td style={{ width: 110, whiteSpace: 'nowrap', color: 'var(--muted)', fontSize: 13 }}>{fmtDate(a.at, true)}</td>
-                    <td style={{ width: 100 }}><span className="badge neutral">{KIND_LABEL[a.kind]}</span></td>
-                    <td>{activityText(a)}{a.who && <span className="sub">par {a.who}</span>}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
         </div>
       )}
 
@@ -131,20 +93,6 @@ export default function Dashboard() {
         </div>
       )}
 
-      {data?.production && (
-        <div className="card">
-          <h2>Équipe de production</h2>
-          <table className="t">
-            <thead><tr><th>Collaborateur</th><th>Rôle</th><th>Tâches du jour</th><th>En retard</th><th>Validées ce mois</th></tr></thead>
-            <tbody>
-              {data.production.map((t: any) => (
-                <tr key={t.name}><td><b>{t.name}</b></td><td>{ROLE_LABELS[t.role]}</td><td>{t.today || 0}</td>
-                  <td>{Number(t.late) ? <span className="badge warn">{t.late}</span> : 0}</td><td>{t.done_month || 0}</td></tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
 
       {data?.team && (
         <div className="card">

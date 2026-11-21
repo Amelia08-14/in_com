@@ -43,6 +43,7 @@ CREATE TABLE users (
   phone VARCHAR(40),
   daily_capacity INT NOT NULL DEFAULT 6,   -- capacité journalière (graphiste)
   active TINYINT(1) NOT NULL DEFAULT 1,
+  preferences TEXT NULL,                   -- préférences d'affichage (JSON)
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
