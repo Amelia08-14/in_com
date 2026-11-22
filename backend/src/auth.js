@@ -22,8 +22,15 @@ const ROLES = {
 const PRODUCTION = ['graphiste', 'photographe', 'developpeur', 'community_manager', 'media_buyer'];
 const COMMERCIAL = ['responsable_commercial', 'commercial_sedentaire', 'commercial_terrain'];
 
-function sign(user) {
-  return jwt.sign({ id: user.id, role: user.role, name: user.name }, SECRET, { expiresIn: '7d' });
+// Rôle principal + rôles supplémentaires (une même personne peut être graphiste et community manager)
+function rolesOf(user) {
+  const extra = String(user.extra_roles || '').split(',').map((r) => r.trim()).filter((r) => r && ROLES[r] && r !== 'client');
+  return [...new Set([user.role, ...extra])];
+}
+
+// Le jeton porte le rôle actif : chaque écran et chaque droit suivent ce rôle
+function sign(user, role = user.role) {
+  return jwt.sign({ id: user.id, role, name: user.name }, SECRET, { expiresIn: '7d' });
 }
 
 function auth(req, res, next) {
@@ -46,4 +53,4 @@ function allow(...roles) {
   };
 }
 
-module.exports = { sign, auth, allow, ROLES, PRODUCTION, COMMERCIAL };
+module.exports = { sign, auth, allow, rolesOf, ROLES, PRODUCTION, COMMERCIAL };

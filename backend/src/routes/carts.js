@@ -212,7 +212,7 @@ crm.post('/carts/:id/status', wrap(async (req, res) => {
 }));
 
 crm.post('/carts/:id/assign', allow('admin', 'responsable_commercial'), wrap(async (req, res) => {
-  const u = await one(`SELECT id FROM users WHERE id=? AND active=1 AND role IN ('commercial_sedentaire','commercial_terrain','responsable_commercial','admin')`, [req.body.user_id]);
+  const u = await one(`SELECT id FROM users WHERE id=? AND active=1 AND (role IN ('commercial_sedentaire','commercial_terrain','responsable_commercial','admin') OR extra_roles REGEXP 'commercial')`, [req.body.user_id]);
   if (!u) throw new HttpError(400, 'Commercial invalide');
   const c = await one('SELECT code FROM carts WHERE id=?', [req.params.id]);
   await q('UPDATE carts SET assigned_to=? WHERE id=?', [u.id, req.params.id]);

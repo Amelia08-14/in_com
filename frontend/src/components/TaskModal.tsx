@@ -46,6 +46,7 @@ export default function TaskModal({ id, onClose, onDone }: { id: number; onClose
       <dl className="kv">
         <dt>Client</dt><dd>{t.client?.name} · formule {t.client?.offer || '—'}</dd>
         <dt>Brief</dt><dd>{t.brief || '—'}</dd>
+        {t.client?.drive_url && <><dt>Dossier du client</dt><dd><a href={t.client.drive_url} target="_blank" rel="noreferrer" style={{ color: 'var(--blue)' }}>Références déposées par le client (Drive)</a></dd></>}
         {t.client?.documents_url && <><dt>Charte & logos</dt><dd><a href={t.client.documents_url} target="_blank" rel="noreferrer" style={{ color: 'var(--blue)' }}>Références du client</a></dd></>}
         {t.last_note && <><dt>Dernière note</dt><dd><div className="notice">{t.last_note}</div></dd></>}
         {last && <><dt>Version actuelle</dt><dd><a href={last.file_url} target="_blank" rel="noreferrer" style={{ color: 'var(--blue)', fontWeight: 600 }}>V{last.version} — ouvrir</a> <span style={{ color: 'var(--muted)' }}>· {fmtDate(last.created_at, true)}</span></dd></>}

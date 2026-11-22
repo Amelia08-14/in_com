@@ -9,7 +9,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import Logo from '@/components/Logo';
 import { ToastProvider } from '@/components/ui';
 import { UserCtx } from '@/lib/me';
-import { api, fmtDate, getToken, getUser, logout, User, CLIENT_HOME, TEAM_HOME } from '@/lib/api';
+import { api, fmtDate, getToken, getUser, logout, setSession, User, CLIENT_HOME, TEAM_HOME } from '@/lib/api';
 import { CLIENT_NAV, NAV, clientLink } from '@/lib/nav';
 import { ROLE_LABELS } from '@/lib/labels';
 import { PROFILE_EVENT } from '@/components/ProfilePage';
@@ -92,7 +92,24 @@ export default function AppShell({ space, children }: { space: Space; children: 
         <div className={`app space-${space}`}>
           <aside className="side">
             <Link href="/" style={{ padding: '4px 6px' }}><Logo /></Link>
-            <div className="who"><b>{me.name}</b><span>{space === 'client' ? 'Espace client' : ROLE_LABELS[me.role]}</span></div>
+            <div className="who">
+              <b>{me.name}</b>
+              {space === 'team' && (me.roles?.length || 0) > 1 ? (
+                // Plusieurs rôles : la personne choisit le rôle avec lequel elle travaille
+                <label className="role-switch">
+                  <span className="sr-only">Rôle actif</span>
+                  <select value={me.role} onChange={async (e) => {
+                    try {
+                      const r = await api<{ token: string; user: User }>('/auth/switch-role', { body: { role: e.target.value } });
+                      setSession(r.token, r.user);
+                      window.location.href = TEAM_HOME;
+                    } catch { /* le rôle actif reste inchangé */ }
+                  }}>
+                    {me.roles!.map((r) => <option key={r} value={r}>{ROLE_LABELS[r] || r}</option>)}
+                  </select>
+                </label>
+              ) : <span>{space === 'client' ? 'Espace client' : ROLE_LABELS[me.role]}</span>}
+            </div>
             <nav>
               {nav.map((n) => {
                 const on = n.href === home ? path === home : path.startsWith(n.href);

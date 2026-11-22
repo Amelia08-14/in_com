@@ -78,7 +78,7 @@ router.get('/prospects/:id', allow(...COMMERCIAL, 'responsable_communication', '
 // Modification d'une fiche : le commercial ne touche ni au statut, ni à l'offre, ni aux documents
 router.patch('/prospects/:id', allow(...COMMERCIAL), wrap(async (req, res) => {
   await scopeProspect(req.user, req.params.id);
-  const editable = ['name', 'contact_name', 'specialty', 'phone', 'email', 'maps_url', 'address', 'sector_id', 'priority'];
+  const editable = ['name', 'contact_name', 'specialty', 'phone', 'email', 'maps_url', 'address', 'sector_id', 'priority', 'drive_url'];
   if (isManager(req.user)) editable.push('label', 'offer_id', 'documents_url', 'source');
   const fields = Object.keys(req.body).filter((k) => editable.includes(k));
   if (!fields.length) throw new HttpError(400, 'Aucun champ modifiable');
@@ -225,7 +225,9 @@ router.get('/deals', allow(...COMMERCIAL), wrap(async (req, res) => {
 router.post('/deals/:id/assign', allow('responsable_commercial'), wrap(async (req, res) => {
   const deal = await one('SELECT d.*, p.name FROM deals d JOIN prospects p ON p.id=d.prospect_id WHERE d.id=?', [req.params.id]);
   if (!deal) throw new HttpError(404, 'Deal introuvable');
-  const target = await one("SELECT id, name FROM users WHERE id=? AND active=1 AND role IN ('admin', ?)", [req.body.user_id, COMMERCIAL]);
+  const target = await one(
+    `SELECT id, name FROM users WHERE id=? AND active=1 AND (role IN ('admin', ?) OR ${COMMERCIAL.map(() => 'FIND_IN_SET(?, extra_roles)').join(' OR ')})`,
+    [req.body.user_id, COMMERCIAL, ...COMMERCIAL]);
   if (!target) throw new HttpError(400, 'Commercial invalide');
   const status = ['a_attribuer', 'a_relancer'].includes(deal.status) ? 'attribue' : deal.status;
   await q('UPDATE deals SET assigned_to=?, status=? WHERE id=?', [target.id, status, deal.id]);

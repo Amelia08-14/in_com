@@ -15,7 +15,9 @@ async function notify(userIds, message, link = null) {
 }
 
 async function notifyRole(roles, message, link = null) {
-  const rows = await q('SELECT id FROM users WHERE active=1 AND role IN (?)', [[].concat(roles)]);
+  const list = [].concat(roles);
+  const rows = await q(
+    `SELECT id FROM users WHERE active=1 AND (role IN (?) OR ${list.map(() => 'FIND_IN_SET(?, extra_roles)').join(' OR ')})`, [list, ...list]);
   await notify(rows.map((r) => r.id), message, link);
 }
 

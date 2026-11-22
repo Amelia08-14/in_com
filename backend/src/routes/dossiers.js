@@ -4,6 +4,7 @@ const router = require('express').Router();
 const { q, one } = require('../db');
 const { allow } = require('../auth');
 const { notify, notifyRole, wrap, HttpError } = require('../util');
+const { launchProduction, generateDailyTasks } = require('./tasks');
 
 async function log(dossierId, userId, status, note = null) {
   await q('INSERT INTO dossier_history (dossier_id, user_id, status, note) VALUES (?,?,?,?)', [dossierId, userId, status, note]);
@@ -48,7 +49,7 @@ router.get('/:id', wrap(async (req, res) => {
   const offer = d.offer_id ? await one('SELECT id, name, price_month FROM offers WHERE id=?', [d.offer_id]) : null;
   // Coordonnées du client : l'équipe attribuée le contacte directement
   const client = u.role === 'client' ? null : await one(
-    `SELECT p.name, p.contact_name, p.phone, p.email, p.address, p.maps_url, p.specialty, p.documents_url,
+    `SELECT p.name, p.contact_name, p.phone, p.email, p.address, p.maps_url, p.specialty, p.documents_url, p.drive_url,
        cu.email AS account_email, cu.phone AS account_phone, cu.company, cu.activity, cu.city, cu.website, cu.social_url, cu.nif, cu.rc
      FROM prospects p LEFT JOIN users cu ON cu.id=p.client_user_id WHERE p.id=?`, [d.prospect_id]);
   const tasks = u.role === 'client' ? [] : await q(
@@ -89,11 +90,37 @@ router.patch('/:id', allow('responsable_communication'), wrap(async (req, res) =
   if (!keys.length) throw new HttpError(400, 'Aucune modification');
   await q(`UPDATE dossiers SET ${keys.map((k) => `${k}=?`).join(', ')} WHERE id=?`, [...keys.map((k) => f[k]), d.id]);
   if (f.status) await log(d.id, req.user.id, f.status, b.note || `Statut corrigé (avant : ${d.status})`);
+  let launch = null;
   if (f.payment_status && f.payment_status !== d.payment_status) {
     const label = { en_attente: 'en attente', paye: 'payé', non_paye: 'non payé' }[f.payment_status];
-    await log(d.id, req.user.id, d.status, `Paiement : ${label}`);
+    await log(d.id, req.user.id, f.status || d.status, `Paiement : ${label}`);
+    // Passé à « payé » avant la production : même lancement automatique que « Confirmer le paiement »
+    const status = f.status || d.status;
+    if (f.payment_status === 'paye' && ['signe', 'paiement_confirme'].includes(status)) {
+      if (status === 'signe') {
+        await q("UPDATE dossiers SET status='paiement_confirme' WHERE id=?", [d.id]);
+        await log(d.id, req.user.id, 'paiement_confirme', 'Paiement reçu');
+      }
+      launch = await launchProduction(d.id, req.user.id);
+    }
   }
-  res.json({ ok: true });
+  res.json({ ok: true, launch });
+}));
+
+// Dossier Drive partagé avec le client pour ses références : renseigné par l'équipe,
+// il apparaît aussitôt dans l'espace client et dans les fiches de l'équipe.
+router.put('/:id/drive', allow('responsable_communication', 'charge_clientele', 'responsable_technique', 'community_manager'), wrap(async (req, res) => {
+  const d = await getDossier(req.params.id);
+  let url = String(req.body?.drive_url || '').trim().slice(0, 500);
+  if (url && !/^https?:\/\//i.test(url)) url = `https://${url}`;
+  if (url && !/^https:\/\/[^\s]+\.[^\s]+/.test(url)) throw new HttpError(400, 'Lien invalide');
+  const before = await one('SELECT drive_url FROM prospects WHERE id=?', [d.prospect_id]);
+  await q('UPDATE prospects SET drive_url=? WHERE id=?', [url || null, d.prospect_id]);
+  if (url && url !== before?.drive_url) {
+    await log(d.id, req.user.id, d.status, 'Dossier Drive de références partagé avec le client');
+    if (d.client_user_id) await notify(d.client_user_id, 'Votre dossier partagé est prêt : déposez-y vos logos, photos et références', '/espace-client/profil');
+  }
+  res.json({ ok: true, drive_url: url || null });
 }));
 
 router.delete('/:id', allow(), wrap(async (req, res) => {
@@ -108,7 +135,9 @@ router.post('/:id/confirm-payment', allow('responsable_communication'), wrap(asy
   await q("UPDATE dossiers SET status='paiement_confirme', payment_status='paye', payment_confirmed_at=NOW(), amount=COALESCE(?, amount) WHERE id=?", [req.body.amount || null, d.id]);
   await log(d.id, req.user.id, 'paiement_confirme', req.body.note);
   if (d.signed_by) await notify(d.signed_by, `Paiement confirmé pour ${d.client_name}`, '/dashboard/dossiers');
-  res.json({ ok: true });
+  // Dès le paiement : équipe attribuée selon la charge et tâches réparties selon la formule
+  const launch = await launchProduction(d.id, req.user.id);
+  res.json({ ok: true, launch });
 }));
 
 // Attribuer un CC + répartir les intervenants, puis lancer la production
@@ -130,7 +159,9 @@ router.post('/:id/assign', allow('responsable_communication'), wrap(async (req, 
     await q("UPDATE dossiers SET status='creation_en_cours' WHERE id=?", [d.id]);
     await log(d.id, req.user.id, 'creation_en_cours', 'Tâches réparties');
   }
-  res.json({ ok: true });
+  // Un graphiste ajouté ou changé reçoit tout de suite les tâches du jour
+  const created = await generateDailyTasks(new Date(), d.prospect_id);
+  res.json({ ok: true, created });
 }));
 
 // CC : présente le travail au client

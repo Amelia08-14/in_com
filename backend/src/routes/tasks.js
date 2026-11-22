@@ -21,21 +21,22 @@ async function getTask(id) {
 
 // ───────── Génération des tâches du jour à partir du quota mensuel ─────────
 let lastGeneration = null;
-async function generateDailyTasks(date = new Date()) {
+// prospectId : ne générer que pour ce client (lancement de production juste après le paiement)
+async function generateDailyTasks(date = new Date(), prospectId = null) {
   if (!isWorkday(date)) return 0;
   const day = ymd(date);
   const monthStart = day.slice(0, 8) + '01';
   const clients = await q(
-    `SELECT p.id, p.name, p.priority, o.posts_month, o.stories_month, ca.user_id AS gd_id,
-       (SELECT d.id FROM dossiers d WHERE d.prospect_id=p.id AND d.status NOT IN ('signe') ORDER BY d.id DESC LIMIT 1) AS dossier_id
+    `SELECT p.id, p.name, p.priority, o.posts_month, o.stories_month, o.reels_month, ca.user_id AS gd_id,
+       (SELECT d.id FROM dossiers d WHERE d.prospect_id=p.id AND d.status NOT IN ('signe') AND d.payment_status<>'non_paye' ORDER BY d.id DESC LIMIT 1) AS dossier_id
      FROM prospects p JOIN offers o ON o.id=p.offer_id
      JOIN client_assignments ca ON ca.prospect_id=p.id AND ca.role='graphiste'
-     WHERE p.label='client'`);
+     WHERE p.label='client' ${prospectId ? 'AND p.id=?' : ''}`, prospectId ? [prospectId] : []);
   const daysLeft = remainingWorkdays(date);
   let created = 0;
   for (const c of clients) {
     if (!c.dossier_id) continue; // pas de production sans paiement confirmé
-    for (const [type, quota] of [['conception', c.posts_month], ['story', c.stories_month]]) {
+    for (const [type, quota] of [['conception', c.posts_month], ['story', c.stories_month], ['reel', c.reels_month]]) {
       if (!quota) continue;
       const already = await one(
         `SELECT COUNT(*) n, SUM(due_date=?) today FROM tasks WHERE prospect_id=? AND type=? AND part='creation'
@@ -48,14 +49,79 @@ async function generateDailyTasks(date = new Date()) {
         const r = await q(
           `INSERT INTO tasks (prospect_id, dossier_id, assigned_to, type, part, theme, priority, due_date, status)
            VALUES (?,?,?,?, 'creation', ?, ?, ?, 'a_faire')`,
-          [c.id, c.dossier_id, c.gd_id, type, `${type === 'story' ? 'Story' : 'Conception'} ${already.n + i + 1}/${quota} — ${c.name}`, c.priority, day]);
+          [c.id, c.dossier_id, c.gd_id, type, `${{ story: 'Story', reel: 'Reel' }[type] || 'Conception'} ${already.n + i + 1}/${quota} — ${c.name}`, c.priority, day]);
         await log(r.insertId, null, 'generation', 'a_faire');
         created++;
       }
     }
   }
-  await checkLateAlerts();
+  if (!prospectId) await checkLateAlerts();
   return created;
+}
+
+// ───────── Lancement automatique de la production dès le paiement ─────────
+// Équipe nécessaire selon la prestation. Chaque rôle manquant est confié au collaborateur le moins chargé
+// (tâches ouvertes et clients suivis), y compris ceux qui ont ce rôle en rôle supplémentaire.
+const TEAM_BY_SERVICE = {
+  abonnement: ['charge_clientele', 'graphiste', 'community_manager'],
+  graphisme: ['charge_clientele', 'graphiste'],
+  photo_video: ['charge_clientele', 'photographe'],
+  developpement: ['charge_clientele', 'developpeur'],
+  media_buying: ['charge_clientele', 'media_buyer'],
+  evenementiel: ['charge_clientele'],
+};
+const ROLE_NAME = { charge_clientele: 'chargé de clientèle', graphiste: 'graphiste', community_manager: 'community manager', photographe: 'photographe', developpeur: 'développeur', media_buyer: 'media buyer' };
+
+async function leastLoaded(role) {
+  return one(
+    `SELECT u.id, u.name,
+       (SELECT COUNT(*) FROM tasks t WHERE t.assigned_to=u.id AND t.status IN (?)) + 3 * (SELECT COUNT(*) FROM client_assignments ca WHERE ca.user_id=u.id) AS charge
+     FROM users u WHERE u.active=1 AND (u.role=? OR FIND_IN_SET(?, u.extra_roles)) ORDER BY charge ASC, u.id LIMIT 1`, [OPEN, role, role]);
+}
+
+async function launchProduction(dossierId, byUserId) {
+  const d = await one(
+    `SELECT d.*, p.name AS client_name, p.client_user_id, p.offer_id AS p_offer, p.drive_url
+     FROM dossiers d JOIN prospects p ON p.id=d.prospect_id WHERE d.id=?`, [dossierId]);
+  if (!d) throw new HttpError(404, 'Dossier introuvable');
+  // La formule du dossier fixe les quotas de production du client
+  if (d.offer_id && d.offer_id !== d.p_offer) await q('UPDATE prospects SET offer_id=? WHERE id=?', [d.offer_id, d.prospect_id]);
+  const offer = await one('SELECT * FROM offers WHERE id=?', [d.offer_id || d.p_offer]);
+  const team = await q('SELECT user_id, role FROM client_assignments WHERE prospect_id=?', [d.prospect_id]);
+  const added = [];
+  const missing = [];
+  for (const role of TEAM_BY_SERVICE[d.service_type] || ['charge_clientele']) {
+    if (team.some((t) => t.role === role)) continue;
+    const u = await leastLoaded(role);
+    if (!u) { missing.push(ROLE_NAME[role] || role); continue; }
+    await q('INSERT IGNORE INTO client_assignments (prospect_id, user_id, role, assigned_by) VALUES (?,?,?,?)', [d.prospect_id, u.id, role, byUserId]);
+    if (role === 'charge_clientele' && !d.cc_id) await q('UPDATE dossiers SET cc_id=? WHERE id=?', [u.id, d.id]);
+    added.push({ ...u, role });
+  }
+  if (['signe', 'paiement_confirme'].includes(d.status)) {
+    await q("UPDATE dossiers SET status='creation_en_cours' WHERE id=?", [d.id]);
+    await log2(d.id, byUserId, 'creation_en_cours', `Production lancée automatiquement${added.length ? ` · équipe : ${added.map((a) => `${a.name} (${ROLE_NAME[a.role]})`).join(', ')}` : ''}`);
+  }
+  const created = await generateDailyTasks(new Date(), d.prospect_id);
+  const quota = offer ? [offer.posts_month && `${offer.posts_month} posts`, offer.stories_month && `${offer.stories_month} stories`, offer.reels_month && `${offer.reels_month} reels`].filter(Boolean).join(', ') : '';
+  for (const a of added) {
+    const what = a.role === 'graphiste' && quota ? ` · ${quota} par mois, découpés en tâches quotidiennes` : '';
+    await notify(a.id, `Nouveau client : ${d.client_name}${offer ? ` (formule ${offer.name})` : ''}${what}`, a.role === 'charge_clientele' ? '/dashboard/dossiers' : '/dashboard/taches');
+  }
+  if (d.client_user_id) {
+    await notify(d.client_user_id, `Paiement reçu : la production de votre projet démarre${d.drive_url ? '. Déposez vos références dans votre dossier partagé' : ''}`, '/espace-client/projets');
+  }
+  if (missing.length) {
+    await notifyRole(['responsable_communication', 'admin'], `Production de ${d.client_name} : aucun ${missing.join(', ')} disponible, attribuez-le dans le dossier`, '/dashboard/dossiers');
+  }
+  if (!offer && (TEAM_BY_SERVICE[d.service_type] || []).includes('graphiste')) {
+    await notifyRole(['responsable_communication', 'admin'], `Production de ${d.client_name} : aucune formule choisie, les tâches ne peuvent pas être réparties`, '/dashboard/dossiers');
+  }
+  return { added, missing, created };
+}
+
+async function log2(dossierId, userId, status, note) {
+  await q('INSERT INTO dossier_history (dossier_id, user_id, status, note) VALUES (?,?,?,?)', [dossierId, userId, status, note]);
 }
 
 async function ensureGenerated() {
@@ -70,7 +136,7 @@ async function checkLateAlerts() {
   const rows = await q(
     `SELECT u.id, u.name, u.daily_capacity, COUNT(t.id) late FROM users u
      JOIN tasks t ON t.assigned_to=u.id AND t.status IN (?) AND t.due_date < CURDATE()
-     WHERE u.role='graphiste' GROUP BY u.id HAVING late >= u.daily_capacity * 3`, [OPEN]);
+     WHERE (u.role='graphiste' OR FIND_IN_SET('graphiste', u.extra_roles)) GROUP BY u.id HAVING late >= u.daily_capacity * 3`, [OPEN]);
   for (const r of rows) {
     const msg = `Retard cumulé ≥ 3 jours pour ${r.name} (${r.late} tâches)`;
     const exists = await one('SELECT id FROM notifications WHERE message=? AND DATE(created_at)=CURDATE()', [msg]);
@@ -116,7 +182,7 @@ router.get('/:id(\\d+)', wrap(async (req, res) => {
   const t = await getTask(req.params.id);
   const versions = await q('SELECT v.*, u.name AS author FROM task_versions v LEFT JOIN users u ON u.id=v.created_by WHERE task_id=? ORDER BY version DESC', [t.id]);
   const history = await q('SELECT h.*, u.name AS user_name FROM task_history h LEFT JOIN users u ON u.id=h.user_id WHERE task_id=? ORDER BY h.created_at DESC', [t.id]);
-  const client = await one('SELECT p.name, p.specialty, p.documents_url, o.name AS offer FROM prospects p LEFT JOIN offers o ON o.id=p.offer_id WHERE p.id=?', [t.prospect_id]);
+  const client = await one('SELECT p.name, p.specialty, p.documents_url, p.drive_url, o.name AS offer FROM prospects p LEFT JOIN offers o ON o.id=p.offer_id WHERE p.id=?', [t.prospect_id]);
   res.json({ ...t, versions, history, client });
 }));
 
@@ -291,7 +357,7 @@ router.get('/stats/me', wrap(async (req, res) => {
 router.get('/stats/team', allow('responsable_technique', 'responsable_communication'), wrap(async (req, res) => {
   const from = req.query.from || ymd(new Date(Date.now() - 29 * 864e5));
   const to = req.query.to || ymd();
-  const gds = await q("SELECT id FROM users WHERE role='graphiste' AND active=1");
+  const gds = await q("SELECT id FROM users WHERE (role='graphiste' OR FIND_IN_SET('graphiste', extra_roles)) AND active=1");
   res.json(await Promise.all(gds.map((g) => gdStats(g.id, from, to))));
 }));
 
@@ -302,7 +368,7 @@ router.get('/quotas', wrap(async (req, res) => {
   let filter = '';
   if (PROD_ROLES.includes(u.role)) { filter = 'AND EXISTS (SELECT 1 FROM client_assignments ca WHERE ca.prospect_id=p.id AND ca.user_id=?)'; params.push(u.id); }
   res.json(await q(
-    `SELECT p.id, p.name, p.priority, o.name AS offer, o.posts_month, o.stories_month, p.documents_url,
+    `SELECT p.id, p.name, p.priority, o.name AS offer, o.posts_month, o.stories_month, p.documents_url, p.drive_url,
        (SELECT COUNT(*) FROM tasks t WHERE t.prospect_id=p.id AND t.type='conception' AND t.status IN ('validee','publiee','validation_client','validation_technique') AND DATE_FORMAT(t.due_date,'%Y-%m')=DATE_FORMAT(CURDATE(),'%Y-%m')) AS posts_done,
        (SELECT COUNT(*) FROM tasks t WHERE t.prospect_id=p.id AND t.type='story' AND t.status IN ('validee','publiee','validation_client','validation_technique') AND DATE_FORMAT(t.due_date,'%Y-%m')=DATE_FORMAT(CURDATE(),'%Y-%m')) AS stories_done,
        (SELECT GROUP_CONCAT(CONCAT(u.name,' (',ca.role,')') SEPARATOR ', ') FROM client_assignments ca JOIN users u ON u.id=ca.user_id WHERE ca.prospect_id=p.id) AS team
@@ -321,3 +387,4 @@ router.post('/clients/:id/assign', allow('responsable_technique', 'responsable_c
 
 module.exports = router;
 module.exports.generateDailyTasks = generateDailyTasks;
+module.exports.launchProduction = launchProduction;

@@ -1,6 +1,6 @@
 export const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api';
 
-export type User = { id: number; name: string; role: string; email: string };
+export type User = { id: number; name: string; role: string; email: string; roles?: string[] };
 
 export function getToken() {
   if (typeof window === 'undefined') return null;

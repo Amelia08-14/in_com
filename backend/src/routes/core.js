@@ -2,7 +2,7 @@
 const router = require('express').Router();
 const bcrypt = require('bcryptjs');
 const { q, one } = require('../db');
-const { sign, auth, allow, ROLES } = require('../auth');
+const { sign, auth, allow, rolesOf, ROLES } = require('../auth');
 const { notifyRole, wrap, HttpError, limit, ymd } = require('../util');
 const { ACTIVITIES } = require('../catalog');
 
@@ -79,15 +79,28 @@ router.post('/auth/login', wrap(async (req, res) => {
   }
   if (!u.active) throw new HttpError(403, 'Ce compte est désactivé. Contactez la direction.');
   failures.delete(key);
-  res.json({ token: sign(u), user: { id: u.id, name: u.name, role: u.role, email: u.email } });
+  res.json({ token: sign(u), user: { id: u.id, name: u.name, role: u.role, email: u.email, roles: rolesOf(u) } });
 }));
 
 // ───────── Authentifié ─────────
 router.use(auth);
 
 router.get('/auth/me', wrap(async (req, res) => {
-  const u = await one('SELECT id, name, email, role, phone, account_type, company FROM users WHERE id=?', [req.user.id]);
-  res.json({ ...u, role_label: ROLES[u.role] });
+  const u = await one('SELECT id, name, email, role, extra_roles, phone, account_type, company, active FROM users WHERE id=?', [req.user.id]);
+  if (!u || !u.active) throw new HttpError(401, 'Compte désactivé');
+  const roles = rolesOf(u);
+  // Rôle actif : celui du jeton s'il est toujours attribué, sinon le rôle principal
+  const role = roles.includes(req.user.role) ? req.user.role : u.role;
+  res.json({ id: u.id, name: u.name, email: u.email, phone: u.phone, account_type: u.account_type, company: u.company, role, roles, primary_role: u.role, role_label: ROLES[role] });
+}));
+
+// Passer d'un rôle à un autre (personne avec plusieurs rôles) : nouveau jeton avec ce rôle actif
+router.post('/auth/switch-role', wrap(async (req, res) => {
+  const u = await one('SELECT * FROM users WHERE id=? AND active=1', [req.user.id]);
+  if (!u) throw new HttpError(401, 'Compte désactivé');
+  const role = String(req.body?.role || '');
+  if (!rolesOf(u).includes(role)) throw new HttpError(403, 'Ce rôle ne vous est pas attribué');
+  res.json({ token: sign(u, role), user: { id: u.id, name: u.name, role, email: u.email, roles: rolesOf(u) } });
 }));
 
 // ───────── Mon profil (espace client et équipe) ─────────
@@ -108,7 +121,9 @@ function missingFields(u) {
 
 router.get('/me/profile', wrap(async (req, res) => {
   const u = await one(`SELECT ${PROFILE_COLS} FROM users WHERE id=?`, [req.user.id]);
-  res.json({ ...u, missing: missingFields(u), activities: ACTIVITIES });
+  // Dossier Drive de références partagé par l'équipe (espace client)
+  const p = u.role === 'client' ? await one('SELECT drive_url FROM prospects WHERE client_user_id=? AND drive_url IS NOT NULL ORDER BY id LIMIT 1', [u.id]) : null;
+  res.json({ ...u, drive_url: p?.drive_url || null, missing: missingFields(u), activities: ACTIVITIES });
 }));
 
 const clean = (v, max) => { const t = String(v ?? '').trim().slice(0, max); return t || null; };
@@ -183,12 +198,23 @@ router.get('/users', wrap(async (req, res) => {
   if (req.user.role === 'client') throw new HttpError(403, 'Accès refusé');
   const { role } = req.query;
   const roles = role ? String(role).split(',') : null;
+  // Une personne apparaît aussi pour ses rôles supplémentaires (ex. : graphiste et community manager)
   const rows = await q(
-    `SELECT u.id, u.name, u.email, u.role, u.phone, u.daily_capacity, u.active,
+    `SELECT u.id, u.name, u.email, u.role, u.extra_roles, u.phone, u.daily_capacity, u.active,
        (SELECT GROUP_CONCAT(s.name SEPARATOR ', ') FROM user_sectors us JOIN sectors s ON s.id=us.sector_id WHERE us.user_id=u.id) AS sectors
-     FROM users u WHERE ${roles ? 'u.role IN (?)' : "u.role<>'client'"} ORDER BY u.role, u.name`, roles ? [roles] : []);
+     FROM users u WHERE ${roles ? `(u.role IN (?) OR ${roles.map(() => 'FIND_IN_SET(?, u.extra_roles)').join(' OR ')})` : "u.role<>'client'"} ORDER BY u.role, u.name`,
+    roles ? [roles, ...roles] : []);
+  // Avec un filtre de rôle, « role » vaut le rôle demandé que la personne occupe (listes d'attribution)
+  if (roles) for (const r of rows) if (!roles.includes(r.role)) r.role = roles.find((x) => rolesOf(r).includes(x)) || r.role;
   res.json(rows);
 }));
+
+// Rôles supplémentaires valides : ni client, ni direction, ni le rôle principal lui-même
+function cleanExtra(list, primary) {
+  if (primary === 'client') return null;
+  const arr = [].concat(list || []).map(String).filter((r) => ROLES[r] && !['client', 'admin', primary].includes(r));
+  return [...new Set(arr)].join(',') || null;
+}
 
 router.post('/users', allow('admin'), wrap(async (req, res) => {
   const { name, email, password, role, phone, daily_capacity, prospect_id } = req.body;
@@ -196,8 +222,8 @@ router.post('/users', allow('admin'), wrap(async (req, res) => {
   if (!EMAIL_RE.test(String(email).trim())) throw new HttpError(400, 'Adresse e-mail invalide');
   if (String(password).length < 8) throw new HttpError(400, 'Mot de passe initial : 8 caractères minimum');
   if (await one('SELECT id FROM users WHERE email=?', [email.toLowerCase().trim()])) throw new HttpError(409, 'Un compte existe déjà avec cet e-mail');
-  const r = await q('INSERT INTO users (name, email, password_hash, role, phone, daily_capacity) VALUES (?,?,?,?,?,?)',
-    [String(name).trim(), email.toLowerCase().trim(), await bcrypt.hash(String(password), 10), role, phone || null, daily_capacity || 6]);
+  const r = await q('INSERT INTO users (name, email, password_hash, role, extra_roles, phone, daily_capacity) VALUES (?,?,?,?,?,?,?)',
+    [String(name).trim(), email.toLowerCase().trim(), await bcrypt.hash(String(password), 10), role, cleanExtra(req.body.extra_roles, role), phone || null, daily_capacity || 6]);
   if (role === 'client' && prospect_id) await q('UPDATE prospects SET client_user_id=? WHERE id=?', [r.insertId, prospect_id]);
   res.json({ id: r.insertId });
 }));
@@ -213,6 +239,10 @@ router.patch('/users/:id', allow('admin'), wrap(async (req, res) => {
   if (Number(req.params.id) === req.user.id && (active === 0 || (role && role !== 'admin'))) throw new HttpError(400, 'Vous ne pouvez pas retirer vos propres droits');
   await q('UPDATE users SET name=COALESCE(?,name), email=COALESCE(?,email), role=COALESCE(?,role), phone=COALESCE(?,phone), daily_capacity=COALESCE(?,daily_capacity), active=COALESCE(?,active) WHERE id=?',
     [name ?? null, email, role ?? null, phone ?? null, daily_capacity ?? null, active ?? null, req.params.id]);
+  if (req.body.extra_roles !== undefined) {
+    const cur = await one('SELECT role FROM users WHERE id=?', [req.params.id]);
+    await q('UPDATE users SET extra_roles=? WHERE id=?', [cleanExtra(req.body.extra_roles, cur.role), req.params.id]);
+  }
   if (password) {
     if (String(password).length < 8) throw new HttpError(400, 'Mot de passe : 8 caractères minimum');
     await q('UPDATE users SET password_hash=? WHERE id=?', [await bcrypt.hash(String(password), 10), req.params.id]);

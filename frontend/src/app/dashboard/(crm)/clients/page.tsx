@@ -25,6 +25,7 @@ export default function Clients() {
               {rows?.map((c) => (
                 <tr key={c.id}>
                   <td><b>{c.name}</b>{c.priority === 1 && <span className="badge accent" style={{ marginLeft: 6 }}>Prioritaire</span>}
+                    {c.drive_url && <span className="sub"><a href={c.drive_url} target="_blank" rel="noreferrer" style={{ color: 'var(--blue)' }}>Dossier Drive du client</a></span>}
                     {c.documents_url && <span className="sub"><a href={c.documents_url} target="_blank" rel="noreferrer" style={{ color: 'var(--blue)' }}>Charte, logos & documents</a></span>}</td>
                   <td>{c.offer || '—'}</td>
                   <td>{c.posts_month ? <><Progress value={c.posts_done / c.posts_month} /><span className="sub">{c.posts_done} / {c.posts_month} · reste {Math.max(0, c.posts_month - c.posts_done)}</span></> : '—'}</td>

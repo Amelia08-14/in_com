@@ -31,6 +31,7 @@ CREATE TABLE users (
     'recouvrement',
     'client'
   ) NOT NULL,
+  extra_roles VARCHAR(255) NULL,          -- rôles supplémentaires, séparés par des virgules
   account_type ENUM('particulier','entreprise') NULL,   -- comptes clients créés depuis le site
   company VARCHAR(160) NULL,
   activity VARCHAR(80) NULL,               -- secteur d'activité du client
@@ -93,6 +94,7 @@ CREATE TABLE prospects (
   label ENUM('prospect','qualifie','promesse','a_eviter','client') NOT NULL DEFAULT 'prospect',
   offer_id INT NULL,
   documents_url VARCHAR(500),
+  drive_url VARCHAR(500) NULL,             -- dossier Drive partagé avec le client pour ses références
   priority TINYINT NOT NULL DEFAULT 2,     -- 1 haute, 2 normale, 3 basse
   client_user_id INT NULL,                 -- compte client dans le CRM
   created_by INT,

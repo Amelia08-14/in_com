@@ -76,6 +76,15 @@ export default function ProfilePage() {
           ? 'Ces informations permettent à votre conseiller de préparer vos devis et vos factures. Elles restent confidentielles.'
           : 'Vos coordonnées dans le CRM et votre mot de passe.'}
       />
+      {isClient && p.drive_url && (
+        <div className="drive-card" style={{ maxWidth: 900, marginBottom: 18 }}>
+          <div style={{ display: 'grid', gap: 4 }}>
+            <p><b>Votre dossier de références</b></p>
+            <p style={{ fontSize: 13.5 }}>Déposez-y vos logos, photos, textes et exemples qui vous plaisent : votre équipe IN COM y a accès.</p>
+          </div>
+          <a className="btn btn-primary" href={p.drive_url} target="_blank" rel="noreferrer">Ouvrir le dossier</a>
+        </div>
+      )}
       {isClient && p.missing?.length > 0 && (
         <div className="profile-missing">À compléter : <b>{p.missing.join(', ')}</b>.</div>
       )}

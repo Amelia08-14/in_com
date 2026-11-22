@@ -358,3 +358,14 @@ table.t td .sub { display: block; font-size: 12.5px; color: var(--muted); }
 .switch-row input:checked + i::after { transform: translateX(14px); }
 .switch-row input:focus-visible + i { outline: 2px solid var(--blue); outline-offset: 2px; }
 .hl-grid { grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
+
+/* Plusieurs rôles */
+.role-switch select { margin-top: 4px; width: 100%; background: rgba(255,255,255,.08); color: var(--orange); border: 1px solid rgba(255,255,255,.18); border-radius: 8px; padding: 5px 8px; font: inherit; font-family: var(--font-mono, monospace); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; cursor: pointer; }
+.role-switch option { color: #001042; text-transform: none; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.role-checks { display: flex; flex-wrap: wrap; gap: 6px; }
+.role-check { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 999px; border: 1px solid var(--line-strong); font-size: 13px; cursor: pointer; }
+.role-check.on { border-color: var(--orange); background: var(--orange-soft); }
+.role-check input { accent-color: var(--orange); }
+.drive-card { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 14px 16px; border-radius: 12px; background: #eaf3ff; }
+.drive-card p { margin: 0; font-size: 14px; color: var(--navy); }

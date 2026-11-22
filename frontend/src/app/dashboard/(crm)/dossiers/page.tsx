@@ -1,7 +1,7 @@
 'use client';
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { useEffect, useState } from 'react';
-import { Badge, Modal, PageHead, Tabs, useAction, useData, Empty } from '@/components/ui';
+import { Badge, Modal, PageHead, Tabs, useAction, useData, useToast, Empty } from '@/components/ui';
 import { api, fmtDA, fmtDate } from '@/lib/api';
 import { useMe } from '@/lib/me';
 import { DOSSIER_FLOW, DOSSIER_STATUS, PAYMENT_STATUS, ROLE_LABELS, SERVICE_TYPE, TASK_STATUS } from '@/lib/labels';
@@ -22,15 +22,50 @@ function ClientCard({ c }: { c: any }) {
         <dt>E-mail</dt><dd>{email ? <a className="link" href={`mailto:${email}`}>{email}</a> : '—'}</dd>
         <dt>Adresse</dt><dd>{[c.address, c.city].filter(Boolean).join(', ') || '—'}{c.maps_url && <> · <a className="link" href={c.maps_url} target="_blank" rel="noreferrer">Maps</a></>}</dd>
         {(c.website || c.social_url) && <><dt>En ligne</dt><dd>{[c.website, c.social_url].filter(Boolean).map((l: string) => <a key={l} className="link" href={l} target="_blank" rel="noreferrer" style={{ marginRight: 10 }}>{l.replace(/^https?:\/\//, '')}</a>)}</dd></>}
-        {c.documents_url && <><dt>Documents</dt><dd><a className="link" href={c.documents_url} target="_blank" rel="noreferrer">Charte, logos et documents</a></dd></>}
+        {c.drive_url && <><dt>Références</dt><dd><a className="link" href={c.drive_url} target="_blank" rel="noreferrer">Dossier Drive du client</a></dd></>}
+        {c.documents_url && <><dt>Documents</dt><dd><a className="link" href={c.documents_url} target="_blank" rel="noreferrer">Contrat et documents</a></dd></>}
       </dl>
+    </div>
+  );
+}
+
+// Résumé lisible du lancement automatique de la production après le paiement
+function launchText(l: any) {
+  if (!l) return '';
+  const team = (l.added || []).map((a: any) => `${a.name} (${ROLE_LABELS[a.role] || a.role})`).join(', ');
+  return [
+    'Production lancée',
+    team && `équipe attribuée : ${team}`,
+    l.created ? `${l.created} tâche${l.created > 1 ? 's' : ''} créée${l.created > 1 ? 's' : ''} aujourd’hui` : 'les tâches arrivent le prochain jour ouvré',
+    l.missing?.length && `à attribuer à la main : ${l.missing.join(', ')}`,
+  ].filter(Boolean).join(' · ');
+}
+
+// Dossier Drive partagé avec le client : l'équipe le renseigne, le client le voit dans son espace et y dépose ses références
+function DriveCard({ d, canEdit, onDone }: { d: any; canEdit: boolean; onDone: () => void }) {
+  const run = useAction();
+  const [url, setUrl] = useState(d.client?.drive_url || '');
+  const current = d.client?.drive_url;
+  return (
+    <div className="drive-card">
+      <div style={{ display: 'grid', gap: 4, flex: '1 1 280px' }}>
+        <p><b>Dossier Drive de références</b>{current ? ' · partagé avec le client' : ''}</p>
+        {current && <a className="link" href={current} target="_blank" rel="noreferrer" style={{ fontSize: 13, wordBreak: 'break-all' }}>{current}</a>}
+        {!current && <p style={{ fontSize: 13, color: 'var(--muted)' }}>Créez un dossier Drive partagé (accès en modification), collez son lien ici : il apparaît aussitôt dans l’espace du client, qui est prévenu par notification et e-mail.</p>}
+      </div>
+      {canEdit && (
+        <div style={{ display: 'flex', gap: 8, flex: '1 1 320px' }}>
+          <input className="input" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://drive.google.com/drive/folders/…" />
+          <button className="btn btn-dark" onClick={() => run(() => api(`/dossiers/${d.id}/drive`, { method: 'PUT', body: { drive_url: url } }), url ? 'Lien partagé avec le client' : 'Lien retiré', onDone)}>{current ? 'Mettre à jour' : 'Partager'}</button>
+        </div>
+      )}
     </div>
   );
 }
 
 // Correction du dossier (direction, responsable communication) : formule, montant, paiement, statut
 function EditDossier({ d, onDone }: { d: any; onDone: () => void }) {
-  const run = useAction();
+  const toast = useToast();
   const { data: offers } = useData<any[]>('/offers');
   const [f, setF] = useState<any>({ offer_id: d.offer_id || '', amount: d.amount || 0, payment_status: d.payment_status, payment_mode: d.payment_mode || 'bureau', service_type: d.service_type, status: d.status, note: '' });
   const set = (k: string) => (e: any) => setF({ ...f, [k]: e.target.value });
@@ -62,7 +97,13 @@ function EditDossier({ d, onDone }: { d: any; onDone: () => void }) {
       {f.status !== d.status && (
         <label className="field" style={{ marginTop: 12 }}><span>Raison du changement d’étape (visible dans l’historique)</span><input className="input" value={f.note} onChange={set('note')} placeholder="Ex. : retour en création, le client a envoyé un nouveau logo" /></label>
       )}
-      <button className="btn btn-primary" style={{ marginTop: 14 }} onClick={() => run(() => api(`/dossiers/${d.id}`, { method: 'PATCH', body: f }), 'Dossier mis à jour', onDone)}>Enregistrer les modifications</button>
+      <button className="btn btn-primary" style={{ marginTop: 14 }} onClick={async () => {
+        try {
+          const r = await api(`/dossiers/${d.id}`, { method: 'PATCH', body: f });
+          toast(r.launch ? launchText(r.launch) : 'Dossier mis à jour');
+          onDone();
+        } catch (e: any) { toast(e.message, true); }
+      }}>Enregistrer les modifications</button>
     </div>
   );
 }
@@ -141,6 +182,7 @@ function Flow({ status, service }: { status: string; service: string }) {
 function DossierModal({ id, onClose, onDone }: { id: number; onClose: () => void; onDone: () => void }) {
   const me = useMe();
   const run = useAction();
+  const toast = useToast();
   const { data: d, reload } = useData<any>(`/dossiers/${id}`);
   const isResp = ['responsable_communication', 'admin'].includes(me.role);
   const { data: staff } = useData<any[]>(isResp ? '/users?role=charge_clientele,graphiste,community_manager,photographe,developpeur,media_buyer' : null);
@@ -155,6 +197,7 @@ function DossierModal({ id, onClose, onDone }: { id: number; onClose: () => void
   const byRole = (r: string) => staff?.filter((s) => s.role === r) || [];
   const awaitingClient = d.status === 'en_attente_validation' && !d.validated_at;
   const canTask = ['admin', 'responsable_communication', 'responsable_technique'].includes(me.role);
+  const canDrive = ['admin', 'responsable_communication', 'charge_clientele', 'responsable_technique', 'community_manager'].includes(me.role);
   const removeDossier = () => {
     if (!confirm(`Supprimer le dossier ${d.title} ? Son historique sera perdu.`)) return;
     run(() => api(`/dossiers/${d.id}`, { method: 'DELETE' }), 'Dossier supprimé', () => { onDone(); onClose(); });
@@ -173,13 +216,16 @@ function DossierModal({ id, onClose, onDone }: { id: number; onClose: () => void
         {d.validated_at && <><dt>Validé par le client</dt><dd>{fmtDate(d.validated_at, true)}</dd></>}
       </dl>
       {d.client && <ClientCard c={d.client} />}
+      {d.client && <DriveCard d={d} canEdit={canDrive} onDone={done} key={d.client.drive_url || 'none'} />}
       {isResp && <EditDossier d={d} onDone={done} key={`${d.status}-${d.payment_status}-${d.offer_id}`} />}
 
       {isResp && d.status === 'signe' && (
         <div className="card" style={{ background: 'var(--warn-soft)', borderColor: 'transparent' }}>
           <h2>Vérifier le paiement</h2>
-          <p style={{ margin: '0 0 12px', fontSize: 14 }}>Aucune production ne démarre sans paiement confirmé.</p>
-          <button className="btn btn-dark" onClick={() => act('confirm-payment', {}, 'Paiement confirmé')}>Confirmer le paiement</button>
+          <p style={{ margin: '0 0 12px', fontSize: 14 }}>Dès que le paiement est confirmé, le CRM attribue l’équipe (chargé de clientèle, graphiste, community manager… selon la prestation, au moins chargé d’abord) et répartit les tâches selon la formule.</p>
+          <button className="btn btn-dark" onClick={async () => {
+            try { const r = await api(`/dossiers/${id}/confirm-payment`, { body: {} }); toast(`Paiement confirmé · ${launchText(r.launch)}`); done(); } catch (e: any) { toast(e.message, true); }
+          }}>Confirmer le paiement et lancer la production</button>
         </div>
       )}
 
@@ -261,7 +307,7 @@ export default function Dossiers() {
     <>
       <PageHead
         title={me.role === 'client' ? 'Mes projets' : 'Dossiers clients'}
-        sub={me.role === 'client' ? 'Suivez chaque prestation, de la signature à la publication.' : 'Signé → Paiement confirmé → Création → Présenté au client pour validation → Livré / Publié. La direction et le responsable communication peuvent corriger une étape à tout moment.'}
+        sub={me.role === 'client' ? 'Suivez chaque prestation, de la signature à la publication.' : 'Signé → Payé (équipe et tâches attribuées automatiquement selon la formule) → Création → Présenté au client → Validé → Publié ou livré. La direction et le responsable communication peuvent corriger une étape à tout moment.'}
       />
       {me.role !== 'client' && (
         <Tabs value={tab} onChange={setTab} items={[
