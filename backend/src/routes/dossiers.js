@@ -163,9 +163,9 @@ router.patch('/:id', allow('responsable_communication'), wrap(async (req, res) =
   res.json({ ok: true, launch });
 }));
 
-// Dossier Drive partagé avec le client pour ses références : renseigné par l'équipe,
+// Dossier Drive partagé avec le client pour ses références : renseigné par la direction ou le responsable technique,
 // il apparaît aussitôt dans l'espace client et dans les fiches de l'équipe.
-router.put('/:id/drive', allow('responsable_communication', 'charge_clientele', 'responsable_technique', 'community_manager'), wrap(async (req, res) => {
+router.put('/:id/drive', allow('responsable_technique'), wrap(async (req, res) => {
   const d = await getDossier(req.params.id);
   let url = String(req.body?.drive_url || '').trim().slice(0, 500);
   if (url && !/^https?:\/\//i.test(url)) url = `https://${url}`;

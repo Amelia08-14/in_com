@@ -51,7 +51,9 @@ function DriveCard({ d, canEdit, onDone }: { d: any; canEdit: boolean; onDone: (
       <div style={{ display: 'grid', gap: 4, flex: '1 1 280px' }}>
         <p><b>Dossier Drive de références</b>{current ? ' · partagé avec le client' : ''}</p>
         {current && <a className="link" href={current} target="_blank" rel="noreferrer" style={{ fontSize: 13, wordBreak: 'break-all' }}>{current}</a>}
-        {!current && <p style={{ fontSize: 13, color: 'var(--muted)' }}>Créez un dossier Drive partagé (accès en modification), collez son lien ici : il apparaît aussitôt dans l’espace du client, qui est prévenu par notification et e-mail.</p>}
+        {!current && <p style={{ fontSize: 13, color: 'var(--muted)' }}>{canEdit
+          ? 'Créez un dossier Drive partagé (accès en modification), collez son lien ici : il apparaît aussitôt dans l’espace du client, qui est prévenu par notification et e-mail.'
+          : 'Pas encore de dossier partagé : la direction ou le responsable technique le renseigne.'}</p>}
       </div>
       {canEdit && (
         <div style={{ display: 'flex', gap: 8, flex: '1 1 320px' }}>
@@ -176,6 +178,7 @@ function EditDossier({ d, onDone }: { d: any; onDone: () => void }) {
 // Tâches précises du dossier : intitulé, consigne et échéance pour un collaborateur
 function DossierTasks({ d, canCreate, onDone }: { d: any; canCreate: boolean; onDone: () => void }) {
   const run = useAction();
+  const isAdmin = useMe().role === 'admin';
   const [open, setOpen] = useState(false);
   const { data: staff } = useData<any[]>(canCreate ? `/users?role=${PROD_ROLES.join(',')},charge_clientele` : null);
   const empty = { assigned_to: '', type: 'conception', theme: '', brief: '', due_date: new Date().toISOString().slice(0, 10), priority: 2 };
@@ -214,13 +217,14 @@ function DossierTasks({ d, canCreate, onDone }: { d: any; canCreate: boolean; on
       )}
       {d.tasks?.length ? (
         <div className="table-wrap"><table className="t">
-          <thead><tr><th>Tâche</th><th>Collaborateur</th><th>Échéance</th><th>Statut</th></tr></thead>
+          <thead><tr><th>Tâche</th><th>Collaborateur</th><th>Échéance</th><th>Statut</th>{isAdmin && <th />}</tr></thead>
           <tbody>
             {d.tasks.map((t: any) => (
               <tr key={t.id}>
                 <td><b>{t.theme || t.type}</b>{t.brief && <span className="sub">{t.brief}</span>}</td>
                 <td>{t.assigned_name}</td><td>{fmtDate(t.due_date)}</td>
                 <td><Badge map={TASK_STATUS} value={t.status} /></td>
+                {isAdmin && <td><button className="btn btn-ghost btn-xs danger-text" onClick={() => confirm(`Supprimer la tâche « ${t.theme || t.type} » ?`) && run(() => api(`/tasks/${t.id}`, { method: 'DELETE' }), 'Tâche supprimée', onDone)}>Supprimer</button></td>}
               </tr>
             ))}
           </tbody>
@@ -300,7 +304,8 @@ function DossierModal({ id, onClose, onDone }: { id: number; onClose: () => void
   if (!d) return <Modal title="Dossier" onClose={onClose}><p>Chargement…</p></Modal>;
   const awaitingClient = d.status === 'en_attente_validation' && !d.validated_at;
   const canTask = ['admin', 'responsable_communication', 'responsable_technique'].includes(me.role);
-  const canDrive = ['admin', 'responsable_communication', 'charge_clientele', 'responsable_technique', 'community_manager'].includes(me.role);
+  // Le lien Drive est renseigné par la direction ou le responsable technique uniquement
+  const canDrive = ['admin', 'responsable_technique'].includes(me.role);
   const removeDossier = () => {
     if (!confirm(`Supprimer le dossier ${d.title} ? Son historique sera perdu.`)) return;
     run(() => api(`/dossiers/${d.id}`, { method: 'DELETE' }), 'Dossier supprimé', () => { onDone(); onClose(); });

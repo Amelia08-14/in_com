@@ -116,6 +116,13 @@ export default function TaskModal({ id, onClose, onDone }: { id: number; onClose
           ))}
         </div>
       </div>
+      {me.role === 'admin' && (
+        <button className="btn btn-ghost btn-sm danger-text" style={{ justifySelf: 'start' }}
+          onClick={() => confirm(`Supprimer la tâche « ${t.theme || t.type} » ? Son historique et ses versions seront aussi supprimés.`)
+            && run(() => api(`/tasks/${id}`, { method: 'DELETE' }), 'Tâche supprimée', () => { onDone(); onClose(); })}>
+          Supprimer la tâche
+        </button>
+      )}
     </Modal>
   );
 }

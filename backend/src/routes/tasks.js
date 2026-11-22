@@ -207,6 +207,13 @@ router.post('/', allow('responsable_technique', 'responsable_communication'), wr
   res.json({ id: r.insertId });
 }));
 
+// Suppression d'une tâche : réservée à la direction (historique et versions partent avec)
+router.delete('/:id(\\d+)', allow(), wrap(async (req, res) => {
+  const t = await getTask(req.params.id);
+  await q('DELETE FROM tasks WHERE id=?', [t.id]);
+  res.json({ ok: true });
+}));
+
 router.patch('/:id/brief', allow('responsable_technique', 'responsable_communication', 'charge_clientele'), wrap(async (req, res) => {
   await q('UPDATE tasks SET theme=COALESCE(?, theme), brief=COALESCE(?, brief), priority=COALESCE(?, priority) WHERE id=?',
     [req.body.theme ?? null, req.body.brief ?? null, req.body.priority ?? null, req.params.id]);

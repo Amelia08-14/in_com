@@ -62,7 +62,7 @@ Règles automatiques implémentées (d'après les workflows) : passage en Qualif
 ## Flux de production (migration `007_flux_roles_drive.sql`)
 
 - **Paiement = lancement** : dès que le paiement est confirmé (bouton « Confirmer le paiement » ou paiement passé à « Payé »), le CRM attribue l'équipe selon la prestation (chargé de clientèle, graphiste, community manager, photographe, développeur ou media buyer), en choisissant le collaborateur le moins chargé, passe le dossier en création et crée les tâches du jour selon la formule (posts, stories et reels). Chacun est notifié ; le client aussi. Un rôle sans collaborateur disponible ou une formule manquante est signalé à la direction et au responsable communication.
-- **Dossier Drive de références** : l'équipe colle le lien d'un dossier Drive partagé dans le dossier client ; il apparaît aussitôt dans « Mon profil » du client (notifié) et dans les fiches, tâches et listes de l'équipe.
+- **Dossier Drive de références** : la direction ou le responsable technique colle le lien d'un dossier Drive partagé dans le dossier client ; il apparaît aussitôt dans « Mon profil » du client (notifié) et dans les fiches, tâches et listes de l'équipe.
 - **Plusieurs rôles** : la direction ajoute des rôles supplémentaires à un compte (menu Utilisateurs). La personne passe d'un rôle à l'autre dans le menu, sous son nom ; elle apparaît dans les listes d'attribution de chacun de ses rôles.
 
 ## Points à valider
