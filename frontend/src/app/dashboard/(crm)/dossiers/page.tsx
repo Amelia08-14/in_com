@@ -179,6 +179,48 @@ function Flow({ status, service }: { status: string; service: string }) {
   );
 }
 
+// Équipe du client : le formulaire part de l'équipe actuelle ; chaque choix remplace la personne
+// précédente pour ce rôle (ses tâches en cours lui sont transférées), « — » retire le rôle.
+const TEAM_FIELDS = ['charge_clientele', 'graphiste', 'community_manager', 'photographe', 'developpeur', 'media_buyer'];
+function TeamForm({ d, staff, onDone }: { d: any; staff: any[]; onDone: () => void }) {
+  const run = useAction();
+  const initial = Object.fromEntries(TEAM_FIELDS.map((r) => [r, String(
+    (r === 'charge_clientele' && d.cc_id) || d.team.find((t: any) => t.role === r)?.id || '')]));
+  const [members, setMembers] = useState<Record<string, string>>(initial);
+  const [service, setService] = useState(d.service_type);
+  // Les listes contiennent aussi les personnes qui ont ce rôle en rôle supplémentaire
+  const byRole = (r: string) => staff.filter((u) => u.role === r || String(u.extra_roles || '').split(',').includes(r));
+  const changed = TEAM_FIELDS.some((r) => members[r] !== initial[r]) || service !== d.service_type;
+  return (
+    <div className="card">
+      <h2>{d.status === 'paiement_confirme' ? 'Attribuer l’équipe et lancer la production' : 'Équipe du client'}</h2>
+      <div className="grid-2">
+        <label className="field"><span>Type de prestation</span>
+          <select className="select" value={service} onChange={(e) => setService(e.target.value)}>
+            {Object.entries(SERVICE_TYPE).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+          </select>
+        </label>
+        {TEAM_FIELDS.map((r) => (
+          <label className="field" key={r}><span>{ROLE_LABELS[r]}</span>
+            <select className="select" value={members[r]} onChange={(e) => setMembers({ ...members, [r]: e.target.value })}>
+              <option value="">— Personne</option>
+              {byRole(r).map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+            </select>
+          </label>
+        ))}
+      </div>
+      <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginTop: 14, flexWrap: 'wrap' }}>
+        <button className="btn btn-primary" disabled={!changed && d.status !== 'paiement_confirme'} onClick={() => run(
+          () => api(`/dossiers/${d.id}/assign`, { body: { members, service_type: service } }),
+          d.status === 'paiement_confirme' ? 'Production lancée' : 'Équipe enregistrée', onDone)}>
+          {d.status === 'paiement_confirme' ? 'Lancer la production' : 'Enregistrer l’équipe'}
+        </button>
+        {changed && <span style={{ fontSize: 13, color: 'var(--muted)' }}>Modifications non enregistrées</span>}
+      </div>
+    </div>
+  );
+}
+
 function DossierModal({ id, onClose, onDone }: { id: number; onClose: () => void; onDone: () => void }) {
   const me = useMe();
   const run = useAction();
@@ -186,15 +228,11 @@ function DossierModal({ id, onClose, onDone }: { id: number; onClose: () => void
   const { data: d, reload } = useData<any>(`/dossiers/${id}`);
   const isResp = ['responsable_communication', 'admin'].includes(me.role);
   const { data: staff } = useData<any[]>(isResp ? '/users?role=charge_clientele,graphiste,community_manager,photographe,developpeur,media_buyer' : null);
-  const [cc, setCc] = useState('');
-  const [team, setTeam] = useState<Record<string, string>>({});
-  const [service, setService] = useState('');
   const [note, setNote] = useState('');
   const done = () => { reload(); onDone(); };
   const act = (path: string, body: any, msg: string) => run(() => api(`/dossiers/${id}/${path}`, { body }), msg, done);
 
   if (!d) return <Modal title="Dossier" onClose={onClose}><p>Chargement…</p></Modal>;
-  const byRole = (r: string) => staff?.filter((s) => s.role === r) || [];
   const awaitingClient = d.status === 'en_attente_validation' && !d.validated_at;
   const canTask = ['admin', 'responsable_communication', 'responsable_technique'].includes(me.role);
   const canDrive = ['admin', 'responsable_communication', 'charge_clientele', 'responsable_technique', 'community_manager'].includes(me.role);
@@ -229,35 +267,8 @@ function DossierModal({ id, onClose, onDone }: { id: number; onClose: () => void
         </div>
       )}
 
-      {isResp && ['paiement_confirme', 'creation_en_cours'].includes(d.status) && (
-        <div className="card">
-          <h2>{d.status === 'paiement_confirme' ? 'Attribuer le CC et répartir les tâches' : 'Ajuster l’équipe'}</h2>
-          <div className="grid-2">
-            <label className="field"><span>Chargé de clientèle</span>
-              <select className="select" value={cc} onChange={(e) => setCc(e.target.value)}>
-                <option value="">{d.cc_id ? 'Inchangé' : 'Choisir…'}</option>{byRole('charge_clientele').map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
-              </select>
-            </label>
-            <label className="field"><span>Type de prestation</span>
-              <select className="select" value={service || d.service_type} onChange={(e) => setService(e.target.value)}>
-                {Object.entries(SERVICE_TYPE).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-              </select>
-            </label>
-            {['graphiste', 'community_manager', 'photographe', 'developpeur', 'media_buyer'].map((r) => (
-              <label className="field" key={r}><span>{ROLE_LABELS[r]}</span>
-                <select className="select" value={team[r] || ''} onChange={(e) => setTeam({ ...team, [r]: e.target.value })}>
-                  <option value="">—</option>{byRole(r).map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
-                </select>
-              </label>
-            ))}
-          </div>
-          <button className="btn btn-primary" style={{ marginTop: 14 }} onClick={() => act('assign', {
-            cc_id: cc || undefined, service_type: service || undefined,
-            team: Object.entries(team).filter(([, v]) => v).map(([role, user_id]) => ({ role, user_id })),
-          }, d.status === 'paiement_confirme' ? 'Production lancée' : 'Équipe mise à jour')}>
-            {d.status === 'paiement_confirme' ? 'Lancer la production' : 'Enregistrer'}
-          </button>
-        </div>
+      {isResp && d.status !== 'signe' && (
+        <TeamForm d={d} staff={staff || []} onDone={done} key={`${d.cc_id}-${d.team.map((t: any) => `${t.role}:${t.id}`).join(',')}`} />
       )}
 
       {['charge_clientele', 'responsable_communication', 'admin'].includes(me.role) && ['creation_en_cours', 'modification_demandee'].includes(d.status) && (

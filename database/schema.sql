@@ -198,7 +198,7 @@ CREATE TABLE client_assignments (
   role VARCHAR(40) NOT NULL,
   assigned_by INT,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (prospect_id, user_id),
+  PRIMARY KEY (prospect_id, user_id, role),
   FOREIGN KEY (prospect_id) REFERENCES prospects(id) ON DELETE CASCADE,
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );

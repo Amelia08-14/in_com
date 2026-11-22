@@ -73,6 +73,8 @@ router.patch('/:id', allow('responsable_communication'), wrap(async (req, res) =
     await q('UPDATE prospects SET offer_id=? WHERE id=?', [f.offer_id, d.prospect_id]);
   }
   if (b.amount !== undefined) f.amount = Math.max(0, parseInt(b.amount, 10) || 0);
+  // Formule choisie sans montant : le montant mensuel de la formule est repris
+  if (f.offer_id && !f.amount && !Number(d.amount)) f.amount = (await one('SELECT price_month FROM offers WHERE id=?', [f.offer_id])).price_month;
   if (b.payment_mode && ['bureau', 'terrain', 'virement'].includes(b.payment_mode)) f.payment_mode = b.payment_mode;
   if (b.payment_status && ['en_attente', 'paye', 'non_paye'].includes(b.payment_status)) {
     f.payment_status = b.payment_status;
@@ -141,18 +143,40 @@ router.post('/:id/confirm-payment', allow('responsable_communication'), wrap(asy
 }));
 
 // Attribuer un CC + répartir les intervenants, puis lancer la production
+// Équipe du client : pour chaque rôle envoyé, la personne choisie remplace la précédente
+// (ses tâches en cours lui sont transférées) ; une valeur vide retire le rôle.
+const TEAM_ROLES = ['charge_clientele', 'graphiste', 'community_manager', 'photographe', 'developpeur', 'media_buyer'];
 router.post('/:id/assign', allow('responsable_communication'), wrap(async (req, res) => {
   const d = await getDossier(req.params.id);
-  const { cc_id, team = [], service_type } = req.body; // team: [{user_id, role}]
+  const { service_type } = req.body;
   if (d.status === 'signe') throw new HttpError(400, 'Aucune production sans paiement confirmé');
-  if (cc_id) {
-    await q('UPDATE dossiers SET cc_id=? WHERE id=?', [cc_id, d.id]);
-    await q('INSERT IGNORE INTO client_assignments (prospect_id, user_id, role, assigned_by) VALUES (?,?,?,?)', [d.prospect_id, cc_id, 'charge_clientele', req.user.id]);
-    await notify(cc_id, `Nouveau client attribué : ${d.client_name} — premier contact sous 24h`, '/dashboard/dossiers');
-  }
-  for (const m of team) {
-    await q('INSERT IGNORE INTO client_assignments (prospect_id, user_id, role, assigned_by) VALUES (?,?,?,?)', [d.prospect_id, m.user_id, m.role, req.user.id]);
-    await notify(m.user_id, `Vous intervenez sur ${d.client_name}`, '/dashboard/taches');
+  // Format actuel : members = { role: user_id | '' } ; ancien format : cc_id + team [{ role, user_id }]
+  const members = { ...(req.body.members || {}) };
+  if (req.body.cc_id) members.charge_clientele = req.body.cc_id;
+  for (const m of req.body.team || []) members[m.role] = m.user_id;
+
+  for (const role of TEAM_ROLES.filter((r) => r in members)) {
+    const target = members[role] ? Number(members[role]) : null;
+    const current = await q('SELECT user_id FROM client_assignments WHERE prospect_id=? AND role=?', [d.prospect_id, role]);
+    const old = current.map((c) => c.user_id).filter((id) => id !== target);
+    if (target) {
+      const u = await one('SELECT id FROM users WHERE id=? AND active=1', [target]);
+      if (!u) throw new HttpError(400, 'Collaborateur invalide');
+    }
+    if (old.length) {
+      await q('DELETE FROM client_assignments WHERE prospect_id=? AND role=? AND user_id IN (?)', [d.prospect_id, role, old]);
+      if (target) {
+        await q("UPDATE tasks SET assigned_to=? WHERE prospect_id=? AND assigned_to IN (?) AND status IN ('a_faire','en_cours','modification_demandee')",
+          [target, d.prospect_id, old]);
+      }
+    }
+    if (target && !current.some((c) => c.user_id === target)) {
+      await q('INSERT IGNORE INTO client_assignments (prospect_id, user_id, role, assigned_by) VALUES (?,?,?,?)', [d.prospect_id, target, role, req.user.id]);
+      await notify(target, role === 'charge_clientele'
+        ? `Nouveau client attribué : ${d.client_name} — premier contact sous 24h`
+        : `Vous intervenez sur ${d.client_name}`, role === 'charge_clientele' ? '/dashboard/dossiers' : '/dashboard/taches');
+    }
+    if (role === 'charge_clientele') await q('UPDATE dossiers SET cc_id=? WHERE id=?', [target, d.id]);
   }
   if (service_type) await q('UPDATE dossiers SET service_type=? WHERE id=?', [service_type, d.id]);
   if (d.status === 'paiement_confirme') {
