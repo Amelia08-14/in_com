@@ -3,7 +3,7 @@
 SET NAMES utf8mb4;
 SET FOREIGN_KEY_CHECKS = 0;
 
-DROP TABLE IF EXISTS cart_events, cart_items, carts, notifications, contact_requests, orders, services, tickets,
+DROP TABLE IF EXISTS dossier_items, cart_events, cart_items, carts, notifications, contact_requests, orders, services, tickets,
   task_history, task_versions, tasks, client_assignments, dossier_history, dossiers,
   deal_history, deals, reports, prospects, offers, user_sectors, sectors, users;
 
@@ -76,7 +76,9 @@ CREATE TABLE offers (
   gift VARCHAR(255) NULL,              -- cadeau affiché (vide = aucun)
   featured TINYINT(1) NOT NULL DEFAULT 0,
   active TINYINT(1) NOT NULL DEFAULT 1,
-  sort_order INT NOT NULL DEFAULT 0
+  sort_order INT NOT NULL DEFAULT 0,
+  custom_dossier_id INT NULL,          -- offre personnalisée d'un dossier (jamais affichée sur le site)
+  INDEX (custom_dossier_id)
 );
 
 -- ───────────── Univers (prospects & clients) ─────────────
@@ -179,6 +181,18 @@ CREATE TABLE dossiers (
   FOREIGN KEY (offer_id) REFERENCES offers(id) ON DELETE SET NULL,
   FOREIGN KEY (signed_by) REFERENCES users(id) ON DELETE SET NULL,
   FOREIGN KEY (cc_id) REFERENCES users(id) ON DELETE SET NULL
+);
+
+CREATE TABLE dossier_items (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  dossier_id INT NOT NULL,
+  service_id INT NULL,
+  label VARCHAR(160) NOT NULL,
+  quantity INT NOT NULL DEFAULT 1,
+  unit_price INT NOT NULL DEFAULT 0,
+  total INT NOT NULL DEFAULT 0,
+  FOREIGN KEY (dossier_id) REFERENCES dossiers(id) ON DELETE CASCADE,
+  FOREIGN KEY (service_id) REFERENCES services(id) ON DELETE SET NULL
 );
 
 CREATE TABLE dossier_history (

@@ -369,3 +369,10 @@ table.t td .sub { display: block; font-size: 12.5px; color: var(--muted); }
 .role-check input { accent-color: var(--orange); }
 .drive-card { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 14px 16px; border-radius: 12px; background: #eaf3ff; }
 .drive-card p { margin: 0; font-size: 14px; color: var(--navy); }
+
+/* Offre personnalisée */
+.custom-offer { display: grid; gap: 12px; margin-top: 14px; padding: 16px; border-radius: 12px; background: #f6f8fc; border: 1px dashed var(--line-strong); }
+.custom-offer h3 { margin: 0; font-size: 15px; }
+.custom-offer .hint { margin: -4px 0 0; font-size: 12.5px; color: var(--muted); }
+.custom-total { margin: 0; font-size: 14px; color: var(--navy); }
+.select.required-missing { border-color: var(--danger); }

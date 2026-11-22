@@ -303,7 +303,7 @@ export default function AdminDashboard({ data, period, setPeriod, name }: { data
           <p className="muted-line">{data.clients.active} clients actifs · {data.clients.accounts.now} nouveaux comptes clients sur la période</p>
           <div className="hbars">
             {data.byOffer.map((o: any) => (
-              <HBar key={o.name} label={o.name} value={Number(o.mrr)} max={offerMax} display={`${fmtN(o.mrr)} DA`} color={C.blue} sub={`${o.clients} client${o.clients > 1 ? 's' : ''} × ${fmtN(o.price_month)} DA`} />
+              <HBar key={o.name} label={o.name} value={Number(o.mrr)} max={offerMax} display={`${fmtN(o.mrr)} DA`} color={C.blue} sub={o.price_month == null ? `${o.clients} client${o.clients > 1 ? 's' : ''} sur mesure` : `${o.clients} client${o.clients > 1 ? 's' : ''} × ${fmtN(o.price_month)} DA`} />
             ))}
           </div>
           {data.clients.mrr === 0 && <p className="muted-line">Le revenu se calcule quand une formule est choisie dans le dossier du client.</p>}

@@ -265,7 +265,7 @@ router.delete('/users/:id', allow('admin'), wrap(async (req, res) => {
 }));
 
 // ───────── Site web : formules et services affichés (direction) ─────────
-router.get('/site/offers', allow(), wrap(async (req, res) => res.json(await q('SELECT * FROM offers ORDER BY sort_order, price_month'))));
+router.get('/site/offers', allow(), wrap(async (req, res) => res.json(await q('SELECT * FROM offers WHERE custom_dossier_id IS NULL ORDER BY sort_order, price_month'))));
 
 const offerFields = (b) => ({
   name: String(b.name || '').trim().slice(0, 80),
@@ -343,7 +343,7 @@ router.delete('/site/services/:id', allow(), wrap(async (req, res) => {
   }
 }));
 
-router.get('/offers', wrap(async (req, res) => res.json(await q('SELECT * FROM offers ORDER BY sort_order, price_month'))));
+router.get('/offers', wrap(async (req, res) => res.json(await q('SELECT * FROM offers WHERE custom_dossier_id IS NULL ORDER BY sort_order, price_month'))));
 
 router.get('/clients', wrap(async (req, res) => {
   res.json(await q("SELECT p.id, p.name, o.name AS offer FROM prospects p LEFT JOIN offers o ON o.id=p.offer_id WHERE p.label='client' ORDER BY p.name"));
@@ -426,8 +426,12 @@ router.get('/dashboard', wrap(async (req, res) => {
     const pipe = await q('SELECT status, COUNT(*) n FROM dossiers GROUP BY status');
     const funnel = await q("SELECT label, COUNT(*) n FROM prospects GROUP BY label");
     const byOffer = await q(
-      `SELECT o.name, o.price_month, COUNT(p.id) clients, COUNT(p.id) * o.price_month mrr
-       FROM offers o LEFT JOIN prospects p ON p.offer_id=o.id AND p.label='client' GROUP BY o.id ORDER BY o.sort_order, o.price_month`);
+      `SELECT IF(o.custom_dossier_id IS NULL, o.name, 'Offres personnalisées') AS name,
+         IF(o.custom_dossier_id IS NULL, o.price_month, NULL) AS price_month, MIN(o.sort_order) AS so,
+         COUNT(p.id) clients, COALESCE(SUM(IF(p.id IS NULL, 0, o.price_month)), 0) mrr
+       FROM offers o LEFT JOIN prospects p ON p.offer_id=o.id AND p.label='client'
+       GROUP BY IF(o.custom_dossier_id IS NULL, o.name, 'Offres personnalisées'), IF(o.custom_dossier_id IS NULL, o.price_month, NULL)
+       HAVING price_month IS NOT NULL OR clients > 0 ORDER BY so, price_month`);
     const leaderboard = await q(
       `SELECT u.id, u.name, u.role,
          (SELECT COUNT(*) FROM reports r WHERE r.user_id=u.id AND ${inP('r.created_at')}) activity,

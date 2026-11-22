@@ -46,7 +46,8 @@ router.get('/:id', wrap(async (req, res) => {
     throw new HttpError(403, 'Dossier non attribué');
   }
   const history = await q('SELECT h.*, u.name AS user_name FROM dossier_history h LEFT JOIN users u ON u.id=h.user_id WHERE dossier_id=? ORDER BY h.created_at DESC', [d.id]);
-  const offer = d.offer_id ? await one('SELECT id, name, price_month FROM offers WHERE id=?', [d.offer_id]) : null;
+  const offer = d.offer_id ? await one('SELECT id, name, price_month, posts_month, stories_month, reels_month, custom_dossier_id FROM offers WHERE id=?', [d.offer_id]) : null;
+  const items = await q('SELECT id, service_id, label, quantity, unit_price, total FROM dossier_items WHERE dossier_id=? ORDER BY id', [d.id]);
   // Coordonnées du client : l'équipe attribuée le contacte directement
   const client = u.role === 'client' ? null : await one(
     `SELECT p.name, p.contact_name, p.phone, p.email, p.address, p.maps_url, p.specialty, p.documents_url, p.drive_url,
@@ -55,26 +56,79 @@ router.get('/:id', wrap(async (req, res) => {
   const tasks = u.role === 'client' ? [] : await q(
     `SELECT t.id, t.type, t.theme, t.brief, t.status, t.due_date, u.name AS assigned_name FROM tasks t JOIN users u ON u.id=t.assigned_to
      WHERE t.prospect_id=? ORDER BY t.due_date DESC, t.id DESC LIMIT 50`, [d.prospect_id]);
-  res.json({ ...d, offer, history, team, client, tasks });
+  res.json({ ...d, offer, items, history, team, client, tasks });
 }));
 
 // Correction d'un dossier (direction, responsable communication) : formule, montant, paiement,
 // prestation et statut, y compris retour à une étape précédente. Chaque changement de statut est historisé.
 const STATUSES = ['signe', 'paiement_confirme', 'creation_en_cours', 'en_attente_validation', 'modification_demandee', 'livre', 'publie'];
+// Offre personnalisée : quotas mensuels sur mesure (posts, stories, reels, prix) et services choisis avec leur nombre.
+// Elle est enregistrée comme une formule propre au dossier, jamais affichée sur le site.
+const int = (v, max = 100000000) => Math.min(max, Math.max(0, parseInt(v, 10) || 0));
+async function saveCustomOffer(d, c = {}) {
+  const posts = int(c.posts_month, 999), stories = int(c.stories_month, 999), reels = int(c.reels_month, 999);
+  const price = int(c.price_month);
+  const items = [];
+  for (const it of (Array.isArray(c.items) ? c.items : []).slice(0, 40)) {
+    const qty = Math.max(1, int(it.quantity, 999));
+    const sv = it.service_id ? await one('SELECT id, name, price FROM services WHERE id=?', [it.service_id]) : null;
+    const label = String(sv?.name || it.label || '').trim().slice(0, 160);
+    if (!label) continue;
+    const unit = it.unit_price !== undefined && it.unit_price !== '' ? int(it.unit_price) : (sv?.price || 0);
+    items.push({ service_id: sv?.id || null, label, quantity: qty, unit_price: unit, total: unit * qty });
+  }
+  if (!posts && !stories && !reels && !items.length) throw new HttpError(400, 'Offre personnalisée vide : indiquez des quotas mensuels ou des services');
+  const features = [posts && `${posts} posts`, stories && `${stories} stories`, reels && `${reels} reels`, ...items.map((i) => `${i.quantity} × ${i.label}`)].filter(Boolean).join(' · ');
+  const existing = await one('SELECT id FROM offers WHERE custom_dossier_id=?', [d.id]);
+  let offerId = existing?.id;
+  if (offerId) {
+    await q('UPDATE offers SET price_month=?, posts_month=?, stories_month=?, reels_month=?, features=? WHERE id=?', [price, posts, stories, reels, features, offerId]);
+  } else {
+    const r = await q(
+      `INSERT INTO offers (code, name, price_month, posts_month, stories_month, reels_month, features, active, sort_order, custom_dossier_id)
+       VALUES (?, 'Offre personnalisée', ?, ?, ?, ?, ?, 0, 999, ?)`,
+      [`perso-${d.id}-${Date.now().toString(36)}`.slice(0, 30), price, posts, stories, reels, features, d.id]);
+    offerId = r.insertId;
+  }
+  await q('DELETE FROM dossier_items WHERE dossier_id=?', [d.id]);
+  for (const i of items) {
+    await q('INSERT INTO dossier_items (dossier_id, service_id, label, quantity, unit_price, total) VALUES (?,?,?,?,?,?)', [d.id, i.service_id, i.label, i.quantity, i.unit_price, i.total]);
+  }
+  return { offerId, price, once: items.reduce((sum, i) => sum + i.total, 0) };
+}
+
 router.patch('/:id', allow('responsable_communication'), wrap(async (req, res) => {
   const d = await getDossier(req.params.id);
   const b = req.body || {};
   const f = {};
+  let custom = null;
   if (b.offer_id !== undefined) {
-    const o = b.offer_id ? await one('SELECT id, name, price_month FROM offers WHERE id=?', [b.offer_id]) : null;
-    if (b.offer_id && !o) throw new HttpError(400, 'Formule inconnue');
-    f.offer_id = o ? o.id : null;
+    // La formule est obligatoire : une formule du catalogue ou une offre personnalisée
+    if (!b.offer_id) throw new HttpError(400, 'Choisissez la formule : une formule du site ou une offre personnalisée');
+    if (b.offer_id === 'custom') {
+      custom = await saveCustomOffer(d, b.custom);
+      f.offer_id = custom.offerId;
+    } else {
+      const o = await one('SELECT id FROM offers WHERE id=? AND (custom_dossier_id IS NULL OR custom_dossier_id=?)', [b.offer_id, d.id]);
+      if (!o) throw new HttpError(400, 'Formule inconnue');
+      f.offer_id = o.id;
+    }
     // La formule du dossier devient celle de la fiche client : c'est elle qui fixe les quotas de production
     await q('UPDATE prospects SET offer_id=? WHERE id=?', [f.offer_id, d.prospect_id]);
+    if (!custom) {
+      // Retour à une formule du catalogue : l'offre personnalisée de ce dossier est supprimée
+      await q('DELETE FROM dossier_items WHERE dossier_id=?', [d.id]);
+      await q('DELETE FROM offers WHERE custom_dossier_id=? AND id<>?', [d.id, f.offer_id]);
+    }
   }
   if (b.amount !== undefined) f.amount = Math.max(0, parseInt(b.amount, 10) || 0);
+  if (custom && !f.amount) f.amount = custom.price;
   // Formule choisie sans montant : le montant mensuel de la formule est repris
   if (f.offer_id && !f.amount && !Number(d.amount)) f.amount = (await one('SELECT price_month FROM offers WHERE id=?', [f.offer_id])).price_month;
+  // Pas de production sans formule : « payé » exige une formule choisie
+  if (b.payment_status === 'paye' && d.payment_status !== 'paye' && !(f.offer_id || d.offer_id)) {
+    throw new HttpError(400, 'Choisissez la formule du client (formule du site ou offre personnalisée) avant de le marquer payé');
+  }
   if (b.payment_mode && ['bureau', 'terrain', 'virement'].includes(b.payment_mode)) f.payment_mode = b.payment_mode;
   if (b.payment_status && ['en_attente', 'paye', 'non_paye'].includes(b.payment_status)) {
     f.payment_status = b.payment_status;
@@ -133,6 +187,7 @@ router.delete('/:id', allow(), wrap(async (req, res) => {
 // Responsable communication : vérifie le paiement
 router.post('/:id/confirm-payment', allow('responsable_communication'), wrap(async (req, res) => {
   const d = await getDossier(req.params.id);
+  if (!d.offer_id) throw new HttpError(400, 'Choisissez d’abord la formule du client (formule du site ou offre personnalisée) dans « Modifier le dossier »');
   if (d.status !== 'signe') throw new HttpError(400, 'Le dossier doit être au statut Signé');
   await q("UPDATE dossiers SET status='paiement_confirme', payment_status='paye', payment_confirmed_at=NOW(), amount=COALESCE(?, amount) WHERE id=?", [req.body.amount || null, d.id]);
   await log(d.id, req.user.id, 'paiement_confirme', req.body.note);

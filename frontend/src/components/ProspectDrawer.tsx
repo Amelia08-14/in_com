@@ -43,7 +43,8 @@ function EditProspect({ p, onCancel, onSaved }: { p: any; onCancel: () => void; 
             <select className="select" value={f.label} onChange={set('label')}>{Object.entries(PROSPECT_LABEL).map(([k, [l]]) => <option key={k} value={k}>{l}</option>)}</select>
           </label>
           <label className="field"><span>Formule</span>
-            <select className="select" value={f.offer_id ?? ''} onChange={set('offer_id')}><option value="">—</option>{offers?.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}</select>
+            <select className="select" value={f.offer_id ?? ''} onChange={set('offer_id')}><option value="">—</option>{offers?.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+              {p.offer_id && !offers?.some((o) => o.id === p.offer_id) && <option value={p.offer_id}>{p.offer || 'Offre personnalisée'}</option>}</select>
           </label>
           <label className="field"><span>Source</span>
             <select className="select" value={f.source} onChange={set('source')}>{Object.entries(SOURCE_LABEL).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
