@@ -40,7 +40,7 @@ function taskStep(t: any, me: any): Step {
 export default function TaskModal({ id, onClose, onDone }: { id: number; onClose: () => void; onDone: () => void }) {
   const me = useMe();
   const run = useAction();
-  const { data: t, reload } = useData<any>(`/tasks/${id}`);
+  const { data: t, reload, error } = useData<any>(`/tasks/${id}`);
   const [file, setFile] = useState('');
   const [note, setNote] = useState('');
   const [to, setTo] = useState('');
@@ -54,7 +54,7 @@ export default function TaskModal({ id, onClose, onDone }: { id: number; onClose
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [t?.status]);
 
-  if (!t) return <Modal title="Tâche" onClose={onClose}><p>Chargement…</p></Modal>;
+  if (!t) return <Modal title="Tâche" onClose={onClose}>{error ? <p className="form-err">Impossible d’ouvrir la tâche : {error}</p> : <p>Chargement…</p>}</Modal>;
   const mine = t.assigned_to === me.id;
   const open = ['a_faire', 'en_cours', 'modification_demandee'].includes(t.status);
   const last = t.versions[0];

@@ -346,12 +346,13 @@ function TeamForm({ d, staff, onDone }: { d: any; staff: any[]; onDone: () => vo
 function DossierModal({ id, onClose, onDone }: { id: number; onClose: () => void; onDone: () => void }) {
   const me = useMe();
   const run = useAction();
-  const { data: d, reload } = useData<any>(`/dossiers/${id}`);
+  const { data: d, reload, error } = useData<any>(`/dossiers/${id}`);
   const isResp = ['responsable_communication', 'admin'].includes(me.role);
   const { data: staff } = useData<any[]>(isResp ? '/users?role=charge_clientele,graphiste,community_manager,photographe,developpeur,media_buyer' : null);
   const done = () => { reload(); onDone(); };
 
-  if (!d) return <Modal title="Dossier" onClose={onClose}><p>Chargement…</p></Modal>;
+  // En cas d'erreur, le message de l'API s'affiche au lieu d'un chargement sans fin
+  if (!d) return <Modal title="Dossier" onClose={onClose}>{error ? <p className="form-err">Impossible d’ouvrir le dossier : {error}</p> : <p>Chargement…</p>}</Modal>;
   const canPay = ['responsable_communication', 'admin', 'recouvrement'].includes(me.role) && d.status === 'signe' && d.offer_id;
   const canTask = ['admin', 'responsable_communication', 'responsable_technique'].includes(me.role);
   // Le lien Drive est renseigné par la direction ou le responsable technique uniquement
