@@ -365,13 +365,16 @@ CREATE TABLE carts (
 CREATE TABLE cart_items (
   id INT AUTO_INCREMENT PRIMARY KEY,
   cart_id INT NOT NULL,
-  kind ENUM('offer','service','devis') NOT NULL,
+  kind ENUM('offer','service','devis','custom') NOT NULL,   -- custom : formule sur mesure saisie par un commercial
   ref VARCHAR(40) NOT NULL,
   label VARCHAR(160) NOT NULL,
   months INT NULL,
   quantity INT NOT NULL DEFAULT 1,
   unit_price INT NOT NULL DEFAULT 0,
   total INT NOT NULL DEFAULT 0,
+  posts_month INT NULL,                    -- quotas mensuels d'une formule sur mesure
+  stories_month INT NULL,
+  reels_month INT NULL,
   FOREIGN KEY (cart_id) REFERENCES carts(id) ON DELETE CASCADE
 );
 

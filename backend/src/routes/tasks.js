@@ -110,7 +110,7 @@ async function launchProduction(dossierId, byUserId) {
   }
   let created = await generateDailyTasks(new Date(), d.prospect_id);
   if (starting) {
-    // Services ponctuels du devis ou de l'offre personnalisée : une tâche chacun
+    // Services ponctuels du devis ou de la formule sur mesure : une tâche chacun
     for (const it of await q('SELECT label, quantity FROM dossier_items WHERE dossier_id=?', [d.id])) {
       if (await createServiceTask({ prospectId: d.prospect_id, dossierId: d.id, label: it.label, quantity: it.quantity, byUserId, origin: 'Service du dossier' })) created++;
     }

@@ -6,6 +6,7 @@ const { q, one } = require('../db');
 const { allow } = require('../auth');
 const { notify, wrap, HttpError } = require('../util');
 const { launchProduction, generateDailyTasks } = require('./tasks');
+const { saveCustomOffer } = require('../flow');
 
 async function log(dossierId, userId, status, note = null) {
   await q('INSERT INTO dossier_history (dossier_id, user_id, status, note) VALUES (?,?,?,?)', [dossierId, userId, status, note]);
@@ -74,49 +75,14 @@ router.get('/:id', wrap(async (req, res) => {
 // Correction d'un dossier (direction, responsable communication) : formule, montant, paiement,
 // prestation et statut, y compris retour à une étape précédente. Chaque changement de statut est historisé.
 const STATUSES = ['signe', 'creation_en_cours', 'livre'];
-// Offre personnalisée : quotas mensuels sur mesure (posts, stories, reels, prix) et services choisis avec leur nombre.
-// Elle est enregistrée comme une formule propre au dossier, jamais affichée sur le site.
-const int = (v, max = 100000000) => Math.min(max, Math.max(0, parseInt(v, 10) || 0));
-async function saveCustomOffer(d, c = {}) {
-  const posts = int(c.posts_month, 999), stories = int(c.stories_month, 999), reels = int(c.reels_month, 999);
-  const price = int(c.price_month);
-  const items = [];
-  for (const it of (Array.isArray(c.items) ? c.items : []).slice(0, 40)) {
-    const qty = Math.max(1, int(it.quantity, 999));
-    const sv = it.service_id ? await one('SELECT id, name, price FROM services WHERE id=?', [it.service_id]) : null;
-    const label = String(sv?.name || it.label || '').trim().slice(0, 160);
-    if (!label) continue;
-    const unit = it.unit_price !== undefined && it.unit_price !== '' ? int(it.unit_price) : (sv?.price || 0);
-    items.push({ service_id: sv?.id || null, label, quantity: qty, unit_price: unit, total: unit * qty });
-  }
-  if (!posts && !stories && !reels && !items.length) throw new HttpError(400, 'Offre personnalisée vide : indiquez des quotas mensuels ou des services');
-  const features = [posts && `${posts} posts`, stories && `${stories} stories`, reels && `${reels} reels`, ...items.map((i) => `${i.quantity} × ${i.label}`)].filter(Boolean).join(' · ');
-  const existing = await one('SELECT id FROM offers WHERE custom_dossier_id=?', [d.id]);
-  let offerId = existing?.id;
-  if (offerId) {
-    await q('UPDATE offers SET price_month=?, posts_month=?, stories_month=?, reels_month=?, features=? WHERE id=?', [price, posts, stories, reels, features, offerId]);
-  } else {
-    const r = await q(
-      `INSERT INTO offers (code, name, price_month, posts_month, stories_month, reels_month, features, active, sort_order, custom_dossier_id)
-       VALUES (?, 'Offre personnalisée', ?, ?, ?, ?, ?, 0, 999, ?)`,
-      [`perso-${d.id}-${Date.now().toString(36)}`.slice(0, 30), price, posts, stories, reels, features, d.id]);
-    offerId = r.insertId;
-  }
-  await q('DELETE FROM dossier_items WHERE dossier_id=?', [d.id]);
-  for (const i of items) {
-    await q('INSERT INTO dossier_items (dossier_id, service_id, label, quantity, unit_price, total) VALUES (?,?,?,?,?,?)', [d.id, i.service_id, i.label, i.quantity, i.unit_price, i.total]);
-  }
-  return { offerId, price, once: items.reduce((sum, i) => sum + i.total, 0) };
-}
-
 router.patch('/:id', allow('responsable_communication'), wrap(async (req, res) => {
   const d = await getDossier(req.params.id);
   const b = req.body || {};
   const f = {};
   let custom = null;
   if (b.offer_id !== undefined) {
-    // La formule est obligatoire : une formule du catalogue ou une offre personnalisée
-    if (!b.offer_id) throw new HttpError(400, 'Choisissez la formule : une formule du site ou une offre personnalisée');
+    // La formule est obligatoire : un pack ou une formule sur mesure
+    if (!b.offer_id) throw new HttpError(400, 'Choisissez la formule : un pack ou une formule sur mesure');
     if (b.offer_id === 'custom') {
       custom = await saveCustomOffer(d, b.custom);
       f.offer_id = custom.offerId;
@@ -128,7 +94,7 @@ router.patch('/:id', allow('responsable_communication'), wrap(async (req, res) =
     // La formule du dossier devient celle de la fiche client : c'est elle qui fixe les quotas de production
     await q('UPDATE prospects SET offer_id=? WHERE id=?', [f.offer_id, d.prospect_id]);
     if (!custom) {
-      // Retour à une formule du catalogue : l'offre personnalisée de ce dossier est supprimée
+      // Retour à une formule du catalogue : la formule sur mesure de ce dossier est supprimée
       await q('DELETE FROM dossier_items WHERE dossier_id=?', [d.id]);
       await q('DELETE FROM offers WHERE custom_dossier_id=? AND id<>?', [d.id, f.offer_id]);
     }
@@ -139,7 +105,7 @@ router.patch('/:id', allow('responsable_communication'), wrap(async (req, res) =
   if (f.offer_id && !f.amount && !Number(d.amount)) f.amount = (await one('SELECT price_month FROM offers WHERE id=?', [f.offer_id])).price_month;
   // Pas de production sans formule : « payé » exige une formule choisie
   if (b.payment_status === 'paye' && d.payment_status !== 'paye' && !(f.offer_id || d.offer_id)) {
-    throw new HttpError(400, 'Choisissez la formule du client (formule du site ou offre personnalisée) avant de le marquer payé');
+    throw new HttpError(400, 'Choisissez la formule du client (pack ou formule sur mesure) avant de le marquer payé');
   }
   if (b.payment_mode && ['bureau', 'terrain', 'virement'].includes(b.payment_mode)) f.payment_mode = b.payment_mode;
   if (b.payment_status && ['en_attente', 'paye', 'non_paye'].includes(b.payment_status)) {
@@ -194,7 +160,7 @@ router.delete('/:id', allow(), wrap(async (req, res) => {
 // La production démarre aussitôt : équipe attribuée selon la charge, tâches réparties selon la formule.
 router.post('/:id/confirm-payment', allow('responsable_communication', 'recouvrement'), wrap(async (req, res) => {
   const d = await getDossier(req.params.id);
-  if (!d.offer_id) throw new HttpError(400, 'Le responsable communication doit d’abord définir la formule du client (formule du site ou offre personnalisée)');
+  if (!d.offer_id) throw new HttpError(400, 'Le responsable communication doit d’abord définir la formule du client (pack ou formule sur mesure)');
   if (d.status !== 'signe') throw new HttpError(400, 'Le paiement de ce dossier est déjà confirmé');
   const amount = req.body.amount !== undefined && req.body.amount !== '' ? Math.max(0, parseInt(req.body.amount, 10) || 0) : null;
   const mode = ['bureau', 'terrain', 'virement'].includes(req.body.payment_mode) ? req.body.payment_mode : null;

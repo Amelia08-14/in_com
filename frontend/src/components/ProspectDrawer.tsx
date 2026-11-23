@@ -44,7 +44,7 @@ function EditProspect({ p, onCancel, onSaved }: { p: any; onCancel: () => void; 
           </label>
           <label className="field"><span>Formule</span>
             <select className="select" value={f.offer_id ?? ''} onChange={set('offer_id')}><option value="">—</option>{offers?.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
-              {p.offer_id && !offers?.some((o) => o.id === p.offer_id) && <option value={p.offer_id}>{p.offer || 'Offre personnalisée'}</option>}</select>
+              {p.offer_id && !offers?.some((o) => o.id === p.offer_id) && <option value={p.offer_id}>{p.offer || 'Formule sur mesure'}</option>}</select>
           </label>
           <label className="field"><span>Source</span>
             <select className="select" value={f.source} onChange={set('source')}>{Object.entries(SOURCE_LABEL).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>

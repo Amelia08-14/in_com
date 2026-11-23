@@ -6,6 +6,7 @@ import { api, fmtDA, fmtDate } from '@/lib/api';
 import { useMe } from '@/lib/me';
 import { DOSSIER_FLOW, DOSSIER_STATUS, PAYMENT_STATUS, ROLE_LABELS, SERVICE_TYPE, TASK_STATUS } from '@/lib/labels';
 import NextStep, { type Step } from '@/components/NextStep';
+import CustomOffer from '@/components/CustomOffer';
 
 const PROD_ROLES = ['graphiste', 'community_manager', 'photographe', 'developpeur', 'media_buyer'];
 
@@ -66,59 +67,7 @@ function DriveCard({ d, canEdit, onDone }: { d: any; canEdit: boolean; onDone: (
   );
 }
 
-// Correction du dossier (direction, responsable communication) : formule, montant, paiement, statut
-// Offre personnalisée : quotas mensuels et services du catalogue (ou libres) avec leur nombre
-type CustomLine = { service_id: string; label: string; quantity: number; unit_price: number };
-function CustomOffer({ c, setC }: { c: any; setC: (c: any) => void }) {
-  const { data: services } = useData<any[]>('/services');
-  const lines: CustomLine[] = c.items;
-  const setLine = (i: number, patch: Partial<CustomLine>) => setC({ ...c, items: lines.map((l, k) => (k === i ? { ...l, ...patch } : l)) });
-  const once = lines.reduce((sum, l) => sum + (Number(l.unit_price) || 0) * (Number(l.quantity) || 0), 0);
-  const num = (k: string) => (e: any) => setC({ ...c, [k]: e.target.value });
-  return (
-    <div className="custom-offer">
-      <h3>Offre personnalisée</h3>
-      <div className="grid-3" style={{ gridTemplateColumns: 'repeat(4, minmax(0, 1fr))' }}>
-        <label className="field"><span>Posts par mois</span><input className="input" type="number" min={0} value={c.posts_month} onChange={num('posts_month')} /></label>
-        <label className="field"><span>Stories par mois</span><input className="input" type="number" min={0} value={c.stories_month} onChange={num('stories_month')} /></label>
-        <label className="field"><span>Reels par mois</span><input className="input" type="number" min={0} value={c.reels_month} onChange={num('reels_month')} /></label>
-        <label className="field"><span>Prix mensuel (DA HT)</span><input className="input" type="number" min={0} value={c.price_month} onChange={num('price_month')} /></label>
-      </div>
-      <p className="hint">Les quotas mensuels sont découpés en tâches quotidiennes pour le graphiste, comme pour une formule du site.</p>
-      <div className="field">
-        <span>Services inclus et leur nombre</span>
-        {lines.length > 0 && (
-          <div className="table-wrap"><table className="t">
-            <thead><tr><th>Service</th><th style={{ width: 90 }}>Nombre</th><th style={{ width: 130 }}>Prix unitaire</th><th style={{ width: 110 }}>Total</th><th style={{ width: 80 }} /></tr></thead>
-            <tbody>
-              {lines.map((l, i) => (
-                <tr key={i}>
-                  <td>{l.service_id ? <b>{l.label}</b> : <input className="input" style={{ height: 34 }} value={l.label} placeholder="Nom du service" onChange={(e) => setLine(i, { label: e.target.value })} />}</td>
-                  <td><input className="input" style={{ height: 34 }} type="number" min={1} value={l.quantity} onChange={(e) => setLine(i, { quantity: Math.max(1, Number(e.target.value) || 1) })} /></td>
-                  <td><input className="input" style={{ height: 34 }} type="number" min={0} value={l.unit_price} onChange={(e) => setLine(i, { unit_price: Number(e.target.value) || 0 })} /></td>
-                  <td>{fmtDA((Number(l.unit_price) || 0) * (Number(l.quantity) || 0))}</td>
-                  <td><button className="btn btn-ghost btn-xs" onClick={() => setC({ ...c, items: lines.filter((_, k) => k !== i) })}>Retirer</button></td>
-                </tr>
-              ))}
-            </tbody>
-          </table></div>
-        )}
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <select className="select" style={{ maxWidth: 360 }} value="" onChange={(e) => {
-            const sv = services?.find((x) => String(x.id) === e.target.value);
-            if (sv) setC({ ...c, items: [...lines, { service_id: String(sv.id), label: sv.name, quantity: 1, unit_price: sv.price }] });
-          }}>
-            <option value="">+ Ajouter un service du catalogue…</option>
-            {services?.map((x) => <option key={x.id} value={x.id}>{x.name} · {fmtDA(x.price)}</option>)}
-          </select>
-          <button className="btn btn-ghost btn-sm" onClick={() => setC({ ...c, items: [...lines, { service_id: '', label: '', quantity: 1, unit_price: 0 }] })}>+ Autre service</button>
-        </div>
-      </div>
-      <p className="custom-total">Mensuel : <b>{fmtDA(Number(c.price_month) || 0)}</b>{once > 0 && <> · Services ponctuels : <b>{fmtDA(once)}</b></>}</p>
-    </div>
-  );
-}
-
+// Correction du dossier (direction, responsable communication) : formule, montant, statut
 function EditDossier({ d, onDone }: { d: any; onDone: () => void }) {
   const toast = useToast();
   const { data: offers } = useData<any[]>('/offers');
@@ -142,7 +91,7 @@ function EditDossier({ d, onDone }: { d: any; onDone: () => void }) {
           }}>
             <option value="" disabled>Choisir la formule…</option>
             {offers?.map((o) => <option key={o.id} value={o.id}>{o.name} · {fmtDA(o.price_month)} / mois</option>)}
-            <option value="custom">Offre personnalisée (services et quantités sur mesure)</option>
+            <option value="custom">Formule sur mesure (services et quantités sur mesure)</option>
           </select>
         </label>
         <label className="field"><span>Montant (DA)</span><input className="input" type="number" value={f.amount} onChange={set('amount')} /></label>
@@ -162,7 +111,7 @@ function EditDossier({ d, onDone }: { d: any; onDone: () => void }) {
       )}
       <button className="btn btn-primary" style={{ marginTop: 14 }} onClick={async () => {
         try {
-          if (!f.offer_id) { toast('Choisissez la formule : une formule du site ou une offre personnalisée', true); return; }
+          if (!f.offer_id) { toast('Choisissez la formule : un pack ou une formule sur mesure', true); return; }
           const body = { ...f, ...(f.offer_id === 'custom' ? { custom, amount: Number(f.amount) || Number(custom.price_month) || 0 } : {}) };
           const r = await api(`/dossiers/${d.id}`, { method: 'PATCH', body });
           toast(r.launch ? launchText(r.launch) : 'Dossier mis à jour');
@@ -263,8 +212,8 @@ function dossierStep(d: any, me: any): Step {
   if (d.status === 'signe') {
     if (role === 'client') return { tone: 'wait', title: 'Paiement attendu', you: 'Dès réception de votre paiement, votre équipe IN COM est attribuée et la production démarre.' };
     if (!d.offer_id) return isResp
-      ? { title: 'Définir l’offre du client', you: 'Choisissez la formule dans « Modifier le dossier » : formule du site ou offre personnalisée.', then: 'le recouvrement pourra confirmer le paiement.' }
-      : { tone: 'wait', title: 'Offre à définir', you: 'Le responsable communication définit l’offre personnalisée, puis le paiement est encaissé.' };
+      ? { title: 'Définir la formule du client', you: 'Choisissez la formule dans « Modifier le dossier » : pack ou formule sur mesure.', then: 'le recouvrement pourra confirmer le paiement.' }
+      : { tone: 'wait', title: 'Offre à définir', you: 'Le responsable communication définit l’formule sur mesure, puis le paiement est encaissé.' };
     if (canPay) return { title: 'Confirmer le paiement', you: `Vérifiez le versement de ${fmtDA(d.amount)} et confirmez.`, then: `le chargé de clientèle et l’équipe de production sont attribués, les tâches sont créées. Le client et ${signer} sont prévenus.` };
     return { tone: 'wait', title: 'Paiement attendu', you: 'Le recouvrement encaisse et confirme le paiement.', then: 'la production démarre toute seule et vous êtes prévenu.' };
   }

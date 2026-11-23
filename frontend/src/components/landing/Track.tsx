@@ -109,7 +109,7 @@ export function TrackView({ code }: { code: string }) {
           {cart.items.map((i, k) => (
             <li key={k}>
               <span>{i.label}{i.kind === 'service' && i.quantity > 1 && ` × ${i.quantity}`}</span>
-              <b>{i.kind === 'devis' ? 'Sur devis' : i.kind === 'offer' ? `${fmt(i.unit_price)} DA / mois` : `${fmt(i.total)} DA`}</b>
+              <b>{i.kind === 'devis' ? 'Sur devis' : ['offer', 'custom'].includes(i.kind) ? `${fmt(i.unit_price)} DA / mois` : `${fmt(i.total)} DA`}</b>
             </li>
           ))}
         </ul>

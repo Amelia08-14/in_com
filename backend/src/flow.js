@@ -61,12 +61,50 @@ async function logDossier(dossierId, userId, status, note = null) {
   await q('INSERT INTO dossier_history (dossier_id, user_id, status, note) VALUES (?,?,?,?)', [dossierId, userId, status, note]);
 }
 
+// Formule sur mesure : quotas mensuels sur mesure (posts, stories, reels, prix) et services choisis avec leur nombre.
+// Elle est enregistrée comme une formule propre au dossier, jamais affichée sur le site.
+const int = (v, max = 100000000) => Math.min(max, Math.max(0, parseInt(v, 10) || 0));
+async function saveCustomOffer(d, c = {}) {
+  const posts = int(c.posts_month, 999), stories = int(c.stories_month, 999), reels = int(c.reels_month, 999);
+  const price = int(c.price_month);
+  const items = [];
+  for (const it of (Array.isArray(c.items) ? c.items : []).slice(0, 40)) {
+    const qty = Math.max(1, int(it.quantity, 999));
+    const sv = it.service_id ? await one('SELECT id, name, price FROM services WHERE id=?', [it.service_id]) : null;
+    const label = String(sv?.name || it.label || '').trim().slice(0, 160);
+    if (!label) continue;
+    const unit = it.unit_price !== undefined && it.unit_price !== '' ? int(it.unit_price) : (sv?.price || 0);
+    items.push({ service_id: sv?.id || null, label, quantity: qty, unit_price: unit, total: unit * qty });
+  }
+  if (!posts && !stories && !reels && !items.length) throw new HttpError(400, 'Formule sur mesure vide : indiquez des quotas mensuels ou des services');
+  const features = [posts && `${posts} posts`, stories && `${stories} stories`, reels && `${reels} reels`, ...items.map((i) => `${i.quantity} × ${i.label}`)].filter(Boolean).join(' · ');
+  const existing = await one('SELECT id FROM offers WHERE custom_dossier_id=?', [d.id]);
+  let offerId = existing?.id;
+  if (offerId) {
+    await q('UPDATE offers SET price_month=?, posts_month=?, stories_month=?, reels_month=?, features=? WHERE id=?', [price, posts, stories, reels, features, offerId]);
+  } else {
+    const r = await q(
+      `INSERT INTO offers (code, name, price_month, posts_month, stories_month, reels_month, features, active, sort_order, custom_dossier_id)
+       VALUES (?, 'Formule sur mesure', ?, ?, ?, ?, ?, 0, 999, ?)`,
+      [`perso-${d.id}-${Date.now().toString(36)}`.slice(0, 30), price, posts, stories, reels, features, d.id]);
+    offerId = r.insertId;
+  }
+  await q('DELETE FROM dossier_items WHERE dossier_id=?', [d.id]);
+  for (const i of items) {
+    await q('INSERT INTO dossier_items (dossier_id, service_id, label, quantity, unit_price, total) VALUES (?,?,?,?,?,?)', [d.id, i.service_id, i.label, i.quantity, i.unit_price, i.total]);
+  }
+  return { offerId, price, once: items.reduce((sum, i) => sum + i.total, 0) };
+}
+
+// Une formule sur mesure a-t-elle un contenu (quotas ou services) ?
+const hasCustom = (c) => !!c && (int(c.posts_month) + int(c.stories_month) + int(c.reels_month) > 0 || (Array.isArray(c.items) && c.items.some((i) => i.service_id || String(i.label || '').trim())));
+
 // ───────── 2. Signature : un seul geste, depuis le reporting, un deal ou un devis ─────────
 // Exige la formule et les documents ; un dossier déjà signé et pas encore payé est réutilisé (pas de doublon).
-async function signClient(prospectId, userId, { documents_url, offer_id, service_type, cartId = null } = {}) {
+async function signClient(prospectId, userId, { documents_url, offer_id, service_type, custom = null, cartId = null } = {}) {
   const docs = String(documents_url || '').trim();
   if (!docs) throw new HttpError(400, 'Documents obligatoires pour un client signé (lien Drive ou photos : contrat, registre de commerce, agrément)');
-  if (!offer_id) throw new HttpError(400, 'Choisissez la formule signée : une formule du site ou une offre personnalisée');
+  if (!offer_id) throw new HttpError(400, 'Choisissez la formule signée : un pack ou une formule sur mesure');
   const p = await one('SELECT * FROM prospects WHERE id=?', [prospectId]);
   if (!p) throw new HttpError(404, 'Fiche introuvable');
   let offer = null;
@@ -80,11 +118,13 @@ async function signClient(prospectId, userId, { documents_url, offer_id, service
   const signer = await one('SELECT name, role FROM users WHERE id=?', [userId]);
   const cart = cartId ? await one('SELECT * FROM carts WHERE id=?', [cartId]) : null;
   const services = cart ? await q("SELECT ref, label, quantity, unit_price, total FROM cart_items WHERE cart_id=? AND kind='service'", [cart.id]) : [];
-  const once = services.reduce((s, i) => s + i.total, 0);
+  // Formule sur mesure définie dès la signature : quotas, services et prix choisis par le commercial
+  const sur = !offer && hasCustom(custom);
+  const once = sur ? 0 : services.reduce((s, i) => s + i.total, 0);
   const amount = (offer ? offer.price_month : 0) + once;
 
   await q("UPDATE prospects SET label='client', documents_url=?, offer_id=COALESCE(?, offer_id) WHERE id=?", [docs, offer?.id || null, prospectId]);
-  const title = `${p.name} · ${offer ? `Formule ${offer.name}` : 'Offre personnalisée'}`;
+  const title = `${p.name} · ${offer ? `Formule ${offer.name}` : 'Formule sur mesure'}`;
   const existing = await one("SELECT id FROM dossiers WHERE prospect_id=? AND status='signe' ORDER BY id DESC LIMIT 1", [prospectId]);
   let dossierId;
   if (existing) {
@@ -98,8 +138,16 @@ async function signClient(prospectId, userId, { documents_url, offer_id, service
     dossierId = r.insertId;
     await logDossier(dossierId, userId, 'signe', cart ? `Signature commerciale · devis ${cart.code}` : 'Signature commerciale');
   }
-  // Services ponctuels du devis : ils deviennent des tâches au paiement
-  for (const s of services) {
+  let customAmount = 0;
+  if (sur) {
+    // La formule sur mesure devient la formule du dossier (ses services sont enregistrés avec elle)
+    const saved = await saveCustomOffer({ id: dossierId }, custom);
+    customAmount = saved.price + saved.once;
+    await q('UPDATE dossiers SET offer_id=?, amount=? WHERE id=?', [saved.offerId, customAmount, dossierId]);
+    await q('UPDATE prospects SET offer_id=? WHERE id=?', [saved.offerId, prospectId]);
+  }
+  // Services ponctuels du devis (avec une formule du catalogue) : ils deviennent des tâches au paiement
+  for (const s of sur ? [] : services) {
     await q('INSERT INTO dossier_items (dossier_id, service_id, label, quantity, unit_price, total) VALUES (?,?,?,?,?,?)',
       [dossierId, Number(s.ref) || null, s.label, s.quantity, s.unit_price, s.total]);
   }
@@ -115,17 +163,17 @@ async function signClient(prospectId, userId, { documents_url, offer_id, service
     }
   }
   await markLeadHandled(prospectId);
-  if (offer) {
+  if (offer || sur) {
     await notifyRole(['recouvrement', 'responsable_communication'],
-      `Encaisser : ${p.name}, formule ${offer.name}, ${fmt(amount)}. Confirmez le paiement dans le dossier : la production démarre aussitôt.`, '/dashboard/dossiers');
+      `Encaisser : ${p.name}, ${offer ? `formule ${offer.name}` : 'formule sur mesure'}, ${fmt(sur ? customAmount : amount)}. Confirmez le paiement dans le dossier : la production démarre aussitôt.`, '/dashboard/dossiers');
   } else {
     await notifyRole('responsable_communication',
-      `Signé : ${p.name}, offre personnalisée. Définissez-la dans le dossier (quotas, services, prix), puis le paiement pourra être confirmé.`, '/dashboard/dossiers');
+      `Signé : ${p.name}, formule sur mesure. Définissez-la dans le dossier (quotas, services, prix), puis le paiement pourra être confirmé.`, '/dashboard/dossiers');
   }
   return dossierId;
 }
 
-// ───────── 5. Tâche de production pour un service ponctuel (devis, offre personnalisée, extra) ─────────
+// ───────── 5. Tâche de production pour un service ponctuel (devis, formule sur mesure, extra) ─────────
 // Le métier est déduit du nom du service ; le responsable technique peut réattribuer.
 function serviceJob(label) {
   const s = String(label).toLowerCase();
@@ -213,6 +261,6 @@ async function checkDeliveryForProspect(prospectId) {
 }
 
 module.exports = {
-  OPEN_TASKS, SERVICE_TYPES, fmt, pickCommercial, newLead, markLeadHandled, cartStep, logDossier,
+  OPEN_TASKS, SERVICE_TYPES, fmt, saveCustomOffer, hasCustom, pickCommercial, newLead, markLeadHandled, cartStep, logDossier,
   signClient, serviceJob, createServiceTask, reopenDossier, checkDelivery, checkDeliveryForProspect,
 };

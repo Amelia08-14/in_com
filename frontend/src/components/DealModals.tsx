@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { Modal, useAction } from '@/components/ui';
 import { api } from '@/lib/api';
-import SignFields, { EMPTY_SIGN, signReady, type Sign } from '@/components/SignFields';
+import SignFields, { EMPTY_SIGN, signBody, signReady, type Sign } from '@/components/SignFields';
 
 export function ScheduleModal({ deal, onClose, onDone }: { deal: any; onClose: () => void; onDone: () => void }) {
   const run = useAction();
@@ -40,9 +40,9 @@ export function OutcomeModal({ deal, onClose, onDone }: { deal: any; onClose: ()
   const ok = outcome && (outcome !== 'reprogrammer' || at) && (outcome !== 'gagne' || signReady(sign));
   const OPTS: [string, string][] = [['reprogrammer', 'Nouvelle date'], ['gagne', 'Client signé'], ['perdu', 'Perdu'], ['a_relancer', 'À relancer']];
   return (
-    <Modal title={`Issue — ${deal.prospect_name}`} onClose={onClose}
+    <Modal title={`Issue — ${deal.prospect_name}`} onClose={onClose} wide={outcome === 'gagne'}
       footer={<><button className="btn btn-ghost" onClick={onClose}>Annuler</button>
-        <button className="btn btn-primary" disabled={!ok} onClick={() => run(() => api(`/deals/${deal.id}/outcome`, { body: { outcome, scheduled_at: at, notes, ...(outcome === 'gagne' ? sign : {}) } }), outcome === 'gagne' ? 'Client signé : dossier créé, le recouvrement encaisse' : 'Issue enregistrée dans votre reporting', () => { onDone(); onClose(); })}>Enregistrer</button></>}>
+        <button className="btn btn-primary" disabled={!ok} onClick={() => run(() => api(`/deals/${deal.id}/outcome`, { body: { outcome, scheduled_at: at, notes, ...(outcome === 'gagne' ? signBody(sign) : {}) } }), outcome === 'gagne' ? 'Client signé : dossier créé, le recouvrement encaisse' : 'Issue enregistrée dans votre reporting', () => { onDone(); onClose(); })}>Enregistrer</button></>}>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         {OPTS.map(([v, l]) => (
           <button key={v} className={`btn btn-sm ${outcome === v ? 'btn-dark' : 'btn-ghost'}`} onClick={() => setOutcome(v)}>{l}</button>

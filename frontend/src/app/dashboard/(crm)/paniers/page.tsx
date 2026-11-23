@@ -6,9 +6,13 @@ import { api, API_URL, fmtDA, fmtDate } from '@/lib/api';
 import { useMe } from '@/lib/me';
 import { CART_STATUS } from '@/lib/labels';
 import NextStep, { type Step } from '@/components/NextStep';
-import SignFields, { EMPTY_SIGN, signReady, type Sign } from '@/components/SignFields';
+import SignFields, { EMPTY_SIGN, signBody, signReady, type Sign } from '@/components/SignFields';
+import { EMPTY_CUSTOM } from '@/components/CustomOffer';
 
-type Line = { kind: 'offer' | 'service' | 'devis'; ref: string; label: string; months?: number; quantity: number; price: number };
+// Une formule par devis : un pack du catalogue (offer) ou une formule sur mesure (custom : quotas et prix choisis)
+type Line = { kind: 'offer' | 'service' | 'devis' | 'custom'; ref: string; label: string; months?: number; quantity: number; price: number;
+  posts_month?: number; stories_month?: number; reels_month?: number };
+const FORMULA = ['offer', 'custom'];
 
 // Demande de devis saisie par un commercial pour un prospect ou un client de l'Univers
 function NewQuote({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
@@ -29,15 +33,17 @@ function NewQuote({ onClose, onDone }: { onClose: () => void; onDone: () => void
     return () => clearTimeout(t);
   }, [name, picked]);
   const add = (l: Line) => setLines((prev) => {
-    const base = l.kind === 'offer' ? prev.filter((x) => x.kind !== 'offer') : prev;
+    const base = FORMULA.includes(l.kind) ? prev.filter((x) => !FORMULA.includes(x.kind)) : prev;
     return base.some((x) => x.kind === l.kind && x.ref === l.ref) ? base : [...base, l];
   });
   const setLine = (i: number, patch: Partial<Line>) => setLines(lines.map((l, k) => (k === i ? { ...l, ...patch } : l)));
   const total = lines.filter((l) => l.kind === 'service').reduce((sum, l) => sum + l.price * l.quantity, 0);
-  const offer = lines.find((l) => l.kind === 'offer');
+  const offer = lines.find((l) => FORMULA.includes(l.kind));
+  const customOk = !lines.some((l) => l.kind === 'custom' && (!l.price || !((l.posts_month || 0) + (l.stories_month || 0) + (l.reels_month || 0))));
 
   const submit = () => run(async () => {
-    const r = await api('/carts', { body: { prospect_id: picked.id, message, items: lines.map(({ kind, ref, months, quantity }) => ({ kind, ref, months, quantity })) } });
+    const r = await api('/carts', { body: { prospect_id: picked.id, message, items: lines.map(({ kind, ref, months, quantity, price, posts_month, stories_month, reels_month }) => (
+      kind === 'custom' ? { kind, ref, months, quantity, unit_price: price, posts_month, stories_month, reels_month } : { kind, ref, months, quantity })) } });
     setCode(r.code);
   }, 'Demande de devis enregistrée', onDone);
 
@@ -45,7 +51,7 @@ function NewQuote({ onClose, onDone }: { onClose: () => void; onDone: () => void
     <Modal wide title="Nouvelle demande de devis" onClose={onClose}
       footer={code ? <button className="btn btn-dark" onClick={onClose}>Fermer</button> : <>
         <button className="btn btn-ghost" onClick={onClose}>Annuler</button>
-        <button className="btn btn-primary" disabled={!picked || !lines.length} onClick={submit}>Enregistrer la demande</button>
+        <button className="btn btn-primary" disabled={!picked || !lines.length || !customOk} onClick={submit}>Enregistrer la demande</button>
       </>}>
       {code ? (
         <div className="effects">
@@ -69,11 +75,13 @@ function NewQuote({ onClose, onDone }: { onClose: () => void; onDone: () => void
         {picked && <div className="notice" style={{ background: 'var(--info-soft)', color: 'var(--navy)' }}>Demande pour <b>{picked.name}</b>{picked.phone ? ` · ${picked.phone}` : ''}</div>}
 
         <div className="grid-3">
-          <label className="field"><span>Formule</span>
+          <label className="field"><span>Formule : pack ou sur mesure</span>
             <select className="select" value="" onChange={(e) => {
+              if (e.target.value === 'custom') { add({ kind: 'custom', ref: 'custom', label: 'Formule sur mesure', months: 6, quantity: 1, price: 0, posts_month: 0, stories_month: 0, reels_month: 0 }); return; }
               const o = offers?.find((x) => x.code === e.target.value);
-              if (o) add({ kind: 'offer', ref: o.code, label: `Formule ${o.name}`, months: 6, quantity: 1, price: o.price_month });
-            }}><option value="">Ajouter une formule…</option>{offers?.filter((o) => o.active).map((o) => <option key={o.id} value={o.code}>{o.name} · {fmtDA(o.price_month)} / mois</option>)}</select>
+              if (o) add({ kind: 'offer', ref: o.code, label: `Pack ${o.name}`, months: 6, quantity: 1, price: o.price_month });
+            }}><option value="">Ajouter une formule…</option>{offers?.filter((o) => o.active).map((o) => <option key={o.id} value={o.code}>Pack {o.name} · {fmtDA(o.price_month)} / mois</option>)}
+              <option value="custom">Formule sur mesure (posts, stories, reels et prix au choix)</option></select>
           </label>
           <label className="field"><span>Service à la carte</span>
             <select className="select" value="" onChange={(e) => {
@@ -98,16 +106,26 @@ function NewQuote({ onClose, onDone }: { onClose: () => void; onDone: () => void
                   <td><b>{l.label}</b></td>
                   <td>
                     {l.kind === 'offer' && <select className="select" style={{ height: 32 }} value={l.months} onChange={(e) => setLine(i, { months: Number(e.target.value) })}><option value={3}>3 mois</option><option value={6}>6 mois</option></select>}
+                    {l.kind === 'custom' && (
+                      <div className="custom-line">
+                        {([['posts_month', 'Posts / mois'], ['stories_month', 'Stories / mois'], ['reels_month', 'Reels / mois']] as const).map(([k, lab]) => (
+                          <label key={k}><span>{lab}</span><input className="input" type="number" min={0} value={l[k] || 0} onChange={(e) => setLine(i, { [k]: Math.max(0, Number(e.target.value) || 0) })} /></label>
+                        ))}
+                        <label><span>Prix / mois (DA)</span><input className="input" type="number" min={0} value={l.price || 0} onChange={(e) => setLine(i, { price: Math.max(0, Number(e.target.value) || 0) })} /></label>
+                        <label><span>Durée</span><select className="select" value={l.months} onChange={(e) => setLine(i, { months: Number(e.target.value) })}><option value={1}>1 mois</option><option value={3}>3 mois</option><option value={6}>6 mois</option><option value={12}>12 mois</option></select></label>
+                      </div>
+                    )}
                     {l.kind === 'service' && <input className="input" style={{ height: 32, width: 80 }} type="number" min={1} value={l.quantity} onChange={(e) => setLine(i, { quantity: Math.max(1, Number(e.target.value) || 1) })} />}
                     {l.kind === 'devis' && <span className="sub">Sur devis</span>}
                   </td>
-                  <td>{l.kind === 'devis' ? '—' : l.kind === 'offer' ? `${fmtDA(l.price)} / mois` : fmtDA(l.price * l.quantity)}</td>
+                  <td>{l.kind === 'devis' ? '—' : FORMULA.includes(l.kind) ? `${fmtDA(l.price)} / mois` : fmtDA(l.price * l.quantity)}</td>
                   <td><button className="btn btn-ghost btn-xs" onClick={() => setLines(lines.filter((_, k) => k !== i))}>Retirer</button></td>
                 </tr>
               ))}
             </tbody>
           </table></div>
         )}
+        {lines.some((l) => l.kind === 'custom') && !customOk && <p className="form-err" style={{ margin: 0 }}>Formule sur mesure : indiquez au moins un nombre de posts, stories ou reels, et le prix mensuel.</p>}
         {(offer || total > 0) && <p style={{ margin: 0, fontSize: 14 }}>{offer && <>Abonnement : <b>{fmtDA(offer.price)} / mois</b> sur {offer.months} mois. </>}{total > 0 && <>Services : <b>{fmtDA(total)}</b>.</>} Les prix sont recalculés à l’enregistrement.</p>}
         <label className="field"><span>Précisions (visibles par l’équipe)</span><textarea className="textarea" value={message} onChange={(e) => setMessage(e.target.value)} placeholder="Besoin du client, délais, budget…" /></label>
       </>}
@@ -146,10 +164,18 @@ function CartModal({ id, onClose, onDone }: { id: number; onClose: () => void; o
   const move = (status: string) =>
     run(() => api(`/carts/${id}/status`, { body: { status, note } }), `Statut : ${CART_STATUS[status][0]}`, () => { setNote(''); reload(); onDone(); });
   const startSign = () => {
-    // La formule du panier est proposée d'office
-    const code = c?.items.find((i: any) => i.kind === 'offer')?.ref;
-    const o = offers?.find((x) => x.code === code);
-    setSign({ ...EMPTY_SIGN, offer_id: o ? String(o.id) : '' });
+    // La formule du devis est reprise d'office : pack, ou formule sur mesure avec ses quotas et ses services
+    const sur = c?.items.find((i: any) => i.kind === 'custom');
+    if (sur) {
+      setSign({ ...EMPTY_SIGN, offer_id: 'custom', custom: {
+        ...EMPTY_CUSTOM, posts_month: sur.posts_month || 0, stories_month: sur.stories_month || 0, reels_month: sur.reels_month || 0, price_month: sur.unit_price,
+        items: c.items.filter((i: any) => i.kind === 'service').map((i: any) => ({ service_id: i.ref, label: i.label, quantity: i.quantity, unit_price: i.unit_price })),
+      } });
+    } else {
+      const code = c?.items.find((i: any) => i.kind === 'offer')?.ref;
+      const o = offers?.find((x) => x.code === code);
+      setSign({ ...EMPTY_SIGN, offer_id: o ? String(o.id) : '' });
+    }
     setSigning(true);
   };
   return (
@@ -175,9 +201,9 @@ function CartModal({ id, onClose, onDone }: { id: number; onClose: () => void; o
               <tbody>
                 {c.items.map((i: any) => (
                   <tr key={i.id}>
-                    <td><b>{i.label}</b><span className="sub">{i.kind === 'offer' ? 'Abonnement' : i.kind === 'devis' ? 'Sur devis' : 'Service'}</span></td>
+                    <td><b>{i.label}</b><span className="sub">{i.kind === 'offer' ? 'Pack' : i.kind === 'custom' ? 'Formule sur mesure' : i.kind === 'devis' ? 'Sur devis' : 'Service'}</span></td>
                     <td>{i.quantity}</td>
-                    <td>{i.kind === 'devis' ? 'Sur devis' : i.kind === 'offer' ? `${fmtDA(i.unit_price)} / mois` : fmtDA(i.unit_price)}</td>
+                    <td>{i.kind === 'devis' ? 'Sur devis' : FORMULA.includes(i.kind) ? `${fmtDA(i.unit_price)} / mois` : fmtDA(i.unit_price)}</td>
                     <td>{i.kind === 'devis' ? '—' : fmtDA(i.total)}</td>
                   </tr>
                 ))}
@@ -200,7 +226,7 @@ function CartModal({ id, onClose, onDone }: { id: number; onClose: () => void; o
               <SignFields value={sign} onChange={setSign} />
               <div style={{ display: 'flex', gap: 8 }}>
                 <button className="btn btn-ghost" onClick={() => setSigning(false)}>Annuler</button>
-                <button className="btn btn-primary" disabled={!signReady(sign)} onClick={() => run(() => api(`/carts/${id}/sign`, { body: sign }),
+                <button className="btn btn-primary" disabled={!signReady(sign)} onClick={() => run(() => api(`/carts/${id}/sign`, { body: signBody(sign) }),
                   'Client signé : dossier créé, le recouvrement encaisse', () => { setSigning(false); reload(); onDone(); })}>Enregistrer la signature</button>
               </div>
             </div>

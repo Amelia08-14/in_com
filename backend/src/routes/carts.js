@@ -27,7 +27,10 @@ function newCode() {
   return 'IC-' + [...b].map((x) => ALPHA[x % ALPHA.length]).join('');
 }
 
-async function priceItems(raw) {
+const qty999 = (v) => Math.min(999, Math.max(0, parseInt(v, 10) || 0));
+
+// allowCustom : la formule sur mesure (quotas et prix choisis) n'est proposée que dans le CRM, par un commercial
+async function priceItems(raw, { allowCustom = false } = {}) {
   if (!Array.isArray(raw) || raw.length === 0) throw new HttpError(400, 'Le panier est vide');
   if (raw.length > 30) throw new HttpError(400, 'Panier trop volumineux');
   const items = [];
@@ -42,12 +45,22 @@ async function priceItems(raw) {
       const s = await one('SELECT * FROM services WHERE id=? AND active=1', [Number(it.ref)]);
       if (!s) throw new HttpError(400, 'Service inconnu');
       items.push({ kind: 'service', ref: String(s.id), label: s.name, months: null, quantity: qty, unit_price: s.price, total: s.price * qty });
+    } else if (it.kind === 'custom' && allowCustom) {
+      // Formule sur mesure : nombre de posts, stories et reels par mois, prix mensuel et durée choisis par le commercial
+      const posts = qty999(it.posts_month), stories = qty999(it.stories_month), reels = qty999(it.reels_month);
+      const price = Math.min(100000000, Math.max(0, parseInt(it.unit_price, 10) || 0));
+      if (!posts && !stories && !reels) throw new HttpError(400, 'Formule sur mesure : indiquez au moins un nombre de posts, stories ou reels');
+      if (!price) throw new HttpError(400, 'Formule sur mesure : indiquez le prix mensuel');
+      const months = [1, 3, 6, 12].includes(Number(it.months)) ? Number(it.months) : 6;
+      const parts = [posts && `${posts} posts`, stories && `${stories} stories`, reels && `${reels} reels`].filter(Boolean).join(' · ');
+      items.push({ kind: 'custom', ref: 'custom', label: `Formule sur mesure : ${parts}, ${months} mois`, months, quantity: 1, unit_price: price, total: price * months,
+        posts_month: posts, stories_month: stories, reels_month: reels });
     } else if (it.kind === 'devis') {
       if (!DEVIS[it.ref]) throw new HttpError(400, 'Prestation inconnue');
       items.push({ kind: 'devis', ref: it.ref, label: DEVIS[it.ref], months: null, quantity: 1, unit_price: 0, total: 0 });
     } else throw new HttpError(400, 'Article invalide');
   }
-  if (items.filter((i) => i.kind === 'offer').length > 1) throw new HttpError(400, 'Une seule formule par panier');
+  if (items.filter((i) => ['offer', 'custom'].includes(i.kind)).length > 1) throw new HttpError(400, 'Une seule formule par panier : un pack ou une formule sur mesure');
   return items;
 }
 
@@ -104,8 +117,8 @@ pub.post('/public/carts', auth, wrap(async (req, res) => {
     'INSERT INTO carts (code, name, company, phone, email, message, prospect_id, user_id, total_once, total_monthly) VALUES (?,?,?,?,?,?,?,?,?,?)',
     [code, name, company || null, phone || null, email || null, message, p.insertId, u.id, once, monthly]);
   for (const i of items) {
-    await q('INSERT INTO cart_items (cart_id, kind, ref, label, months, quantity, unit_price, total) VALUES (?,?,?,?,?,?,?,?)',
-      [r.insertId, i.kind, i.ref, i.label, i.months, i.quantity, i.unit_price, i.total]);
+    await q('INSERT INTO cart_items (cart_id, kind, ref, label, months, quantity, unit_price, total, posts_month, stories_month, reels_month) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+      [r.insertId, i.kind, i.ref, i.label, i.months, i.quantity, i.unit_price, i.total, i.posts_month ?? null, i.stories_month ?? null, i.reels_month ?? null]);
   }
   await q("INSERT INTO cart_events (cart_id, status, note) VALUES (?, 'recue', 'Panier envoyé depuis le site')", [r.insertId]);
   // Un commercial responsable dès l'arrivée : il devient le conseiller du client
@@ -149,9 +162,10 @@ crm.post('/carts', wrap(async (req, res) => {
   const b = req.body || {};
   const p = await one('SELECT * FROM prospects WHERE id=?', [b.prospect_id]);
   if (!p) throw new HttpError(400, 'Choisissez la fiche du prospect ou du client');
-  const items = await priceItems(b.items);
+  const items = await priceItems(b.items, { allowCustom: true });
   const once = items.filter((i) => i.kind === 'service').reduce((sum, i) => sum + i.total, 0);
   const offer = items.find((i) => i.kind === 'offer');
+  const sur = items.find((i) => i.kind === 'custom');
   if (offer) {
     const o = await one('SELECT id FROM offers WHERE code=?', [offer.ref]);
     await q('UPDATE prospects SET offer_id=? WHERE id=?', [o.id, p.id]);
@@ -167,10 +181,10 @@ crm.post('/carts', wrap(async (req, res) => {
     `INSERT INTO carts (code, name, company, phone, email, message, prospect_id, user_id, created_by, assigned_to, total_once, total_monthly)
      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
     [code, p.contact_name || p.name, p.contact_name ? p.name : null, p.phone || cu?.phone || null, p.email || cu?.email || null, message,
-      p.id, p.client_user_id || null, req.user.id, req.user.id, once, offer ? offer.unit_price : 0]);
+      p.id, p.client_user_id || null, req.user.id, req.user.id, once, (offer || sur) ? (offer || sur).unit_price : 0]);
   for (const i of items) {
-    await q('INSERT INTO cart_items (cart_id, kind, ref, label, months, quantity, unit_price, total) VALUES (?,?,?,?,?,?,?,?)',
-      [r.insertId, i.kind, i.ref, i.label, i.months, i.quantity, i.unit_price, i.total]);
+    await q('INSERT INTO cart_items (cart_id, kind, ref, label, months, quantity, unit_price, total, posts_month, stories_month, reels_month) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+      [r.insertId, i.kind, i.ref, i.label, i.months, i.quantity, i.unit_price, i.total, i.posts_month ?? null, i.stories_month ?? null, i.reels_month ?? null]);
   }
   await q("INSERT INTO cart_events (cart_id, status, note, user_id) VALUES (?, 'recue', 'Demande de devis saisie par votre conseiller', ?)", [r.insertId, req.user.id]);
   if (p.client_user_id) await notify(p.client_user_id, `Votre demande de devis ${code} est enregistrée : votre conseiller vous recontacte.`, '/espace-client/demandes');
@@ -230,7 +244,7 @@ crm.post('/carts/:id/sign', wrap(async (req, res) => {
   if (!['recue', 'contactee', 'devis_envoye'].includes(c.status)) throw new HttpError(400, 'Ce devis est déjà signé ou clôturé');
   if (!c.prospect_id) throw new HttpError(400, 'Ce devis n’est rattaché à aucune fiche client');
   const b = req.body || {};
-  const dossierId = await signClient(c.prospect_id, req.user.id, { documents_url: b.documents_url, offer_id: b.offer_id, service_type: b.service_type, cartId: c.id });
+  const dossierId = await signClient(c.prospect_id, req.user.id, { documents_url: b.documents_url, offer_id: b.offer_id, service_type: b.service_type, custom: b.custom, cartId: c.id });
   await q("INSERT INTO reports (user_id, prospect_id, channel, reason, notes, documents_url) VALUES (?,?, 'appel', 'signe', ?, ?)",
     [req.user.id, c.prospect_id, `Devis ${c.code} signé`, b.documents_url]);
   res.json({ ok: true, dossier_id: dossierId });

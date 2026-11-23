@@ -5,7 +5,7 @@ import { Badge, Modal, PageHead, useData, useToast, Empty } from '@/components/u
 import { api, qs, fmtDate } from '@/lib/api';
 import { useMe } from '@/lib/me';
 import { DEAL_STATUS, PROSPECT_LABEL, REASON_LABEL } from '@/lib/labels';
-import SignFields, { EMPTY_SIGN, signReady, type Sign } from '@/components/SignFields';
+import SignFields, { EMPTY_SIGN, signBody, signReady, type Sign } from '@/components/SignFields';
 
 const REASONS: Record<string, string[]> = {
   commercial_sedentaire: ['prospect', 'relance_sedentaire', 'relance_terrain', 'relance_visite', 'deal_terrain', 'deal_bureau', 'signe'],
@@ -53,7 +53,7 @@ function ReportForm({ onClose, onDone }: { onClose: () => void; onDone: () => vo
 
   async function submit() {
     try {
-      const body: any = { reason, notes, channel: mode, ...(reason === 'signe' ? sign : {}) };
+      const body: any = { reason, notes, channel: mode, ...(reason === 'signe' ? signBody(sign) : {}) };
       if (picked) body.prospect_id = picked.id;
       else body.prospect = { ...np, name };
       const r = await api('/reports', { body });
@@ -68,6 +68,7 @@ function ReportForm({ onClose, onDone }: { onClose: () => void; onDone: () => vo
     <Modal
       title={isVisit ? 'Déclarer une visite' : 'Déclarer un appel'}
       onClose={onClose}
+      wide={reason === 'signe'}
       footer={effects ? <button className="btn btn-dark" onClick={onClose}>Fermer</button> : <>
         <button className="btn btn-ghost" onClick={onClose}>Annuler</button>
         <button className="btn btn-primary" disabled={!canSubmit} onClick={submit}>Enregistrer</button>
