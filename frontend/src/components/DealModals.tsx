@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { Modal, useAction } from '@/components/ui';
 import { api } from '@/lib/api';
+import SignFields, { EMPTY_SIGN, signReady, type Sign } from '@/components/SignFields';
 
 export function ScheduleModal({ deal, onClose, onDone }: { deal: any; onClose: () => void; onDone: () => void }) {
   const run = useAction();
@@ -35,20 +36,20 @@ export function OutcomeModal({ deal, onClose, onDone }: { deal: any; onClose: ()
   const [outcome, setOutcome] = useState('');
   const [at, setAt] = useState('');
   const [notes, setNotes] = useState('');
-  const [docs, setDocs] = useState('');
-  const ok = outcome && (outcome !== 'reprogrammer' || at) && (outcome !== 'gagne' || docs);
-  const OPTS: [string, string][] = [['reprogrammer', 'Nouvelle date'], ['gagne', 'Gagné (signé)'], ['perdu', 'Perdu'], ['a_relancer', 'À relancer']];
+  const [sign, setSign] = useState<Sign>(EMPTY_SIGN);
+  const ok = outcome && (outcome !== 'reprogrammer' || at) && (outcome !== 'gagne' || signReady(sign));
+  const OPTS: [string, string][] = [['reprogrammer', 'Nouvelle date'], ['gagne', 'Client signé'], ['perdu', 'Perdu'], ['a_relancer', 'À relancer']];
   return (
     <Modal title={`Issue — ${deal.prospect_name}`} onClose={onClose}
       footer={<><button className="btn btn-ghost" onClick={onClose}>Annuler</button>
-        <button className="btn btn-primary" disabled={!ok} onClick={() => run(() => api(`/deals/${deal.id}/outcome`, { body: { outcome, scheduled_at: at, notes, documents_url: docs } }), 'Issue enregistrée dans votre reporting', () => { onDone(); onClose(); })}>Enregistrer</button></>}>
+        <button className="btn btn-primary" disabled={!ok} onClick={() => run(() => api(`/deals/${deal.id}/outcome`, { body: { outcome, scheduled_at: at, notes, ...(outcome === 'gagne' ? sign : {}) } }), outcome === 'gagne' ? 'Client signé : dossier créé, le recouvrement encaisse' : 'Issue enregistrée dans votre reporting', () => { onDone(); onClose(); })}>Enregistrer</button></>}>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         {OPTS.map(([v, l]) => (
           <button key={v} className={`btn btn-sm ${outcome === v ? 'btn-dark' : 'btn-ghost'}`} onClick={() => setOutcome(v)}>{l}</button>
         ))}
       </div>
       {outcome === 'reprogrammer' && <label className="field"><span>Nouvelle date convenue</span><input type="datetime-local" className="input" value={at} onChange={(e) => setAt(e.target.value)} /></label>}
-      {outcome === 'gagne' && <label className="field"><span>Lien Drive ou photos des documents (contrat, registre de commerce, agrément) *</span><input className="input" value={docs} onChange={(e) => setDocs(e.target.value)} /></label>}
+      {outcome === 'gagne' && <SignFields value={sign} onChange={setSign} />}
       {outcome === 'a_relancer' && <div className="notice">Le deal repart dans Deals, chez le commercial qui l’a créé.</div>}
       <label className="field"><span>Notes</span><textarea className="textarea" value={notes} onChange={(e) => setNotes(e.target.value)} /></label>
     </Modal>

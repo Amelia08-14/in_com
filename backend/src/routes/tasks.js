@@ -4,6 +4,7 @@ const router = require('express').Router();
 const { q, one } = require('../db');
 const { allow } = require('../auth');
 const { notify, notifyRole, ymd, remainingWorkdays, isWorkday, wrap, HttpError } = require('../util');
+const { cartStep, createServiceTask, reopenDossier, checkDeliveryForProspect, fmt } = require('../flow');
 
 const OPEN = ['a_faire', 'en_cours', 'modification_demandee'];
 const PROD_ROLES = ['graphiste', 'photographe', 'developpeur', 'community_manager', 'media_buyer'];
@@ -14,7 +15,8 @@ async function log(taskId, userId, action, status, note = null) {
 
 async function getTask(id) {
   const t = await one(
-    `SELECT t.*, p.name AS client_name, p.client_user_id FROM tasks t JOIN prospects p ON p.id=t.prospect_id WHERE t.id=?`, [id]);
+    `SELECT t.*, p.name AS client_name, p.client_user_id, u.name AS assigned_name
+     FROM tasks t JOIN prospects p ON p.id=t.prospect_id LEFT JOIN users u ON u.id=t.assigned_to WHERE t.id=?`, [id]);
   if (!t) throw new HttpError(404, 'Tâche introuvable');
   return t;
 }
@@ -36,6 +38,7 @@ async function generateDailyTasks(date = new Date(), prospectId = null) {
   let created = 0;
   for (const c of clients) {
     if (!c.dossier_id) continue; // pas de production sans paiement confirmé
+    const before = created;
     for (const [type, quota] of [['conception', c.posts_month], ['story', c.stories_month], ['reel', c.reels_month]]) {
       if (!quota) continue;
       const already = await one(
@@ -54,6 +57,8 @@ async function generateDailyTasks(date = new Date(), prospectId = null) {
         created++;
       }
     }
+    // Nouveau mois d'abonnement : le dossier livré le mois dernier repasse en production
+    if (created > before) await reopenDossier(c.dossier_id, 'Nouveau mois de production');
   }
   if (!prospectId) await checkLateAlerts();
   return created;
@@ -98,18 +103,33 @@ async function launchProduction(dossierId, byUserId) {
     if (role === 'charge_clientele' && !d.cc_id) await q('UPDATE dossiers SET cc_id=? WHERE id=?', [u.id, d.id]);
     added.push({ ...u, role });
   }
-  if (['signe', 'paiement_confirme'].includes(d.status)) {
+  const starting = ['signe', 'paiement_confirme'].includes(d.status);
+  if (starting) {
     await q("UPDATE dossiers SET status='creation_en_cours' WHERE id=?", [d.id]);
     await log2(d.id, byUserId, 'creation_en_cours', `Production lancée automatiquement${added.length ? ` · équipe : ${added.map((a) => `${a.name} (${ROLE_NAME[a.role]})`).join(', ')}` : ''}`);
   }
-  const created = await generateDailyTasks(new Date(), d.prospect_id);
+  let created = await generateDailyTasks(new Date(), d.prospect_id);
+  if (starting) {
+    // Services ponctuels du devis ou de l'offre personnalisée : une tâche chacun
+    for (const it of await q('SELECT label, quantity FROM dossier_items WHERE dossier_id=?', [d.id])) {
+      if (await createServiceTask({ prospectId: d.prospect_id, dossierId: d.id, label: it.label, quantity: it.quantity, byUserId, origin: 'Service du dossier' })) created++;
+    }
+    await cartStep(d.id, 'en_production', 'Paiement reçu : la production a démarré');
+    if (d.signed_by && d.signed_by !== byUserId) {
+      await notify(d.signed_by, `Paiement reçu pour ${d.client_name} (${fmt(d.amount)}) : la production démarre. Rien à faire de votre côté.`, '/dashboard/dossiers');
+    }
+    if (!d.drive_url) {
+      await notifyRole('responsable_technique', `${d.client_name} a payé : créez son dossier Drive de références et collez le lien dans son dossier.`, '/dashboard/dossiers');
+    }
+  }
   const quota = offer ? [offer.posts_month && `${offer.posts_month} posts`, offer.stories_month && `${offer.stories_month} stories`, offer.reels_month && `${offer.reels_month} reels`].filter(Boolean).join(', ') : '';
   for (const a of added) {
     const what = a.role === 'graphiste' && quota ? ` · ${quota} par mois, découpés en tâches quotidiennes` : '';
-    await notify(a.id, `Nouveau client : ${d.client_name}${offer ? ` (formule ${offer.name})` : ''}${what}`, a.role === 'charge_clientele' ? '/dashboard/dossiers' : '/dashboard/taches');
+    const todo = a.role === 'charge_clientele' ? ' Appelez le client sous 24 h pour vous présenter.' : ' Vos tâches arrivent dans Mes tâches.';
+    await notify(a.id, `Nouveau client : ${d.client_name}${offer ? ` (formule ${offer.name})` : ''}${what}.${todo}`, a.role === 'charge_clientele' ? '/dashboard/dossiers' : '/dashboard/taches');
   }
   if (d.client_user_id) {
-    await notify(d.client_user_id, `Paiement reçu : la production de votre projet démarre${d.drive_url ? '. Déposez vos références dans votre dossier partagé' : ''}`, '/espace-client/projets');
+    await notify(d.client_user_id, `Paiement reçu : la production de votre projet démarre. Vous validerez chaque contenu dans « À valider »${d.drive_url ? ' ; déposez vos références dans votre dossier partagé' : ''}.`, '/espace-client/projets');
   }
   if (missing.length) {
     await notifyRole(['responsable_communication', 'admin'], `Production de ${d.client_name} : aucun ${missing.join(', ')} disponible, attribuez-le dans le dossier`, '/dashboard/dossiers');
@@ -243,7 +263,7 @@ router.post('/:id/submit', wrap(async (req, res) => {
   await q("UPDATE tasks SET status='validation_technique', completed_at=NOW() WHERE id=?", [t.id]);
   // Ligne de reporting automatique : création ou modification
   await log(t.id, req.user.id, t.part === 'modification' ? 'modification' : 'creation', 'validation_technique', comment);
-  await notifyRole('responsable_technique', `Nouvelle conception à valider : ${t.client_name} (V${v.n})`, '/dashboard/validation');
+  await notifyRole('responsable_technique', `À valider : ${t.theme || t.client_name} (V${v.n}). Validez ou demandez une modification avec une note.`, '/dashboard/validation');
   res.json({ ok: true, version: v.n });
 }));
 
@@ -251,7 +271,7 @@ async function sendToModification(t, userId, note, by) {
   if (!note) throw new HttpError(400, 'Note obligatoire');
   await q("UPDATE tasks SET status='modification_demandee', part='modification', modif_count=modif_count+1, last_note=?, due_date=CURDATE(), completed_at=NULL WHERE id=?", [note, t.id]);
   await log(t.id, userId, `refus_${by}`, 'modification_demandee', note);
-  await notify(t.assigned_to, `Modification à faire (${t.client_name}) : ${note}`, '/dashboard/taches');
+  await notify(t.assigned_to, `Modification à faire (${t.client_name}) : ${note}. Déposez la version corrigée dans Mes tâches.`, '/dashboard/taches');
 }
 
 // Responsable technique : validation interne
@@ -263,8 +283,8 @@ router.post('/:id/tech-review', allow('responsable_technique'), wrap(async (req,
     await q("UPDATE tasks SET status='validation_client' WHERE id=?", [t.id]);
     await log(t.id, req.user.id, 'validation_technique', 'validation_client', req.body.note);
     const ccs = await q("SELECT user_id FROM client_assignments WHERE prospect_id=? AND role='charge_clientele'", [t.prospect_id]);
-    await notify(ccs.map((c) => c.user_id), `Conception prête pour validation : ${t.client_name}`, '/dashboard/validation');
-    if (t.client_user_id) await notify(t.client_user_id, `Une conception vous attend pour validation`, '/espace-client/a-valider');
+    await notify(ccs.map((c) => c.user_id), `À faire valider par le client : ${t.theme || t.client_name}. Relancez-le s'il n'a pas répondu sous 48 h.`, '/dashboard/validation');
+    if (t.client_user_id) await notify(t.client_user_id, 'Un contenu vous attend : validez-le ou demandez une modification dans « À valider ».', '/espace-client/a-valider');
   } else {
     await sendToModification(t, req.user.id, req.body.note, 'technique');
   }
@@ -279,9 +299,10 @@ router.post('/:id/client-review', allow('charge_clientele', 'client'), wrap(asyn
   if (req.body.decision === 'valider') {
     await q("UPDATE tasks SET status='validee' WHERE id=?", [t.id]);
     await log(t.id, req.user.id, 'validation_client', 'validee', req.body.note);
-    await notify(t.assigned_to, `Bravo, conception validée ! (${t.client_name})`, '/dashboard/taches');
+    await notify(t.assigned_to, `Bravo, validé par le client ! (${t.theme || t.client_name}). Rien d'autre à faire sur cette tâche.`, '/dashboard/taches');
     const cms = await q("SELECT user_id FROM client_assignments WHERE prospect_id=? AND role='community_manager'", [t.prospect_id]);
-    await notify(cms.map((c) => c.user_id), `Contenu validé à programmer : ${t.client_name}`, '/dashboard/validation');
+    if (t.type !== 'dev') await notify(cms.map((c) => c.user_id), `À publier : ${t.theme || t.client_name}, validé par le client. Publiez-le puis marquez-le publié.`, '/dashboard/validation');
+    await checkDeliveryForProspect(t.prospect_id);
   } else {
     await sendToModification(t, req.user.id, req.body.note, req.user.role === 'client' ? 'client' : 'cc');
   }
@@ -294,6 +315,7 @@ router.post('/:id/publish', allow('community_manager'), wrap(async (req, res) =>
   if (t.status !== 'validee') throw new HttpError(400, 'Contenu non validé');
   await q("UPDATE tasks SET status='publiee' WHERE id=?", [t.id]);
   await log(t.id, req.user.id, 'publication', 'publiee');
+  await checkDeliveryForProspect(t.prospect_id);
   res.json({ ok: true });
 }));
 
@@ -304,7 +326,7 @@ router.post('/:id/reassign', allow('responsable_technique'), wrap(async (req, re
   if (!user_id || Number(user_id) === t.assigned_to) throw new HttpError(400, 'Choisir un autre graphiste');
   await q('UPDATE tasks SET assigned_to=?, reassigned_from=? WHERE id=?', [user_id, t.assigned_to, t.id]);
   await log(t.id, req.user.id, 'reattribution', t.status, `De ${t.assigned_to} vers ${user_id}`);
-  await notify(user_id, `Tâche réattribuée : ${t.theme || t.client_name}`, '/dashboard/taches');
+  await notify(user_id, `Tâche qui vous est confiée : ${t.theme || t.client_name}. Elle est dans Mes tâches.`, '/dashboard/taches');
   res.json({ ok: true });
 }));
 

@@ -127,11 +127,11 @@ const dt = (d) => `${ymd(d)} ${String(d.getHours()).padStart(2, '0')}:00:00`;
   // Dossiers clients
   const dossiers = [
     ['Clinique El Feth', 'premium', 'creation_en_cours', U.terrain, U.cc],
-    ['Pharmacie Ibn Sina', 'pro', 'en_attente_validation', U.sedentaire, U.cc],
+    ['Pharmacie Ibn Sina', 'pro', 'livre', U.sedentaire, U.cc],
     ['Immo Horizon', 'premium', 'creation_en_cours', U.terrain, U.cc2],
-    ['Pâtisserie Les Délices', 'essentiel', 'modification_demandee', U.sedentaire, U.cc2],
+    ['Pâtisserie Les Délices', 'essentiel', 'creation_en_cours', U.sedentaire, U.cc2],
     ['Auto-École Rihana', 'essentiel', 'signe', U.sedentaire2, null],
-    ['Cabinet Dentaire Smile', 'pro', 'paiement_confirme', U.sedentaire, null],
+    ['Cabinet Dentaire Smile', 'pro', 'signe', U.sedentaire, null],
   ];
   const D = {};
   for (const [name, offer, status, signer, cc] of dossiers) {
@@ -144,7 +144,7 @@ const dt = (d) => `${ymd(d)} ${String(d.getHours()).padStart(2, '0')}:00:00`;
     D[name] = r.insertId;
     await q("INSERT INTO dossier_history (dossier_id, user_id, status, note, created_at) VALUES (?,?, 'signe', 'Signature commerciale', ?)", [r.insertId, signer, dt(daysAgo(15))]);
     if (status !== 'signe') await q("INSERT INTO dossier_history (dossier_id, user_id, status, created_at) VALUES (?,?, 'paiement_confirme', ?)", [r.insertId, U['resp.com'], dt(daysAgo(10))]);
-    if (!['signe', 'paiement_confirme'].includes(status)) await q("INSERT INTO dossier_history (dossier_id, user_id, status, note, created_at) VALUES (?,?, 'creation_en_cours', 'Tâches réparties', ?)", [r.insertId, U['resp.com'], dt(daysAgo(9))]);
+    if (status !== 'signe') await q("INSERT INTO dossier_history (dossier_id, user_id, status, note, created_at) VALUES (?,?, 'creation_en_cours', 'Tâches réparties', ?)", [r.insertId, U['resp.com'], dt(daysAgo(9))]);
   }
 
   // Équipes par client

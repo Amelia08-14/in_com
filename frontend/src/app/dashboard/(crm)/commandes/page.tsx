@@ -34,6 +34,19 @@ function NewOrder({ onClose, onDone }: { onClose: () => void; onDone: () => void
   );
 }
 
+// Prochaine étape d'un extra : commercial → recouvrement → production, et ce que voit le client
+function orderNext(o: any, role: string): [string, boolean] {
+  const client = role === 'client';
+  switch (o.status) {
+    case 'en_attente': return client ? ['Un commercial vous appelle pour confirmer', false]
+      : ['commercial_sedentaire', 'responsable_commercial', 'admin'].includes(role) ? ['À vous : confirmer avec le client puis valider', true] : ['Confirmation par le commercial', false];
+    case 'recouvrement': case 'validee': return client ? ['Le service facturation vous contacte pour le paiement', false]
+      : role === 'recouvrement' ? ['À vous : encaisser puis cliquer « Encaissée »', true] : ['Encaissement par le recouvrement', false];
+    case 'payee': return client ? ['En production : vous le validerez dans « À valider »', false] : ['Payée : tâche de production créée', false];
+    default: return ['Annulée', false];
+  }
+}
+
 export default function Commandes() {
   const me = useMe();
   const run = useAction();
@@ -45,9 +58,9 @@ export default function Commandes() {
     <>
       <PageHead
         title={isClient ? 'Commander un extra' : 'Commandes client'}
-        sub={isClient ? 'Ajoutez un service à votre formule. Les prix sont fixes ; un commercial confirme avec vous.'
+        sub={isClient ? 'Ajoutez un service à votre formule. Les prix sont fixes ; un commercial confirme avec vous, puis la production démarre dès le paiement.'
           : me.role === 'recouvrement' ? 'Commandes validées par les commerciaux : clients prêts à payer.'
-          : 'Demandes de services en extra (cross-sell). Vous validez la commande, pas le prix : elle part ensuite au recouvrement.'}
+          : 'Extras commandés par les clients : le commercial confirme, le recouvrement encaisse, puis une tâche de production est créée toute seule.'}
         actions={isClient && <button className="btn btn-primary" onClick={() => setCreate(true)}>+ Nouvelle commande</button>}
       />
       {rows?.length === 0 ? <Empty>Aucune commande.</Empty> : (
@@ -61,14 +74,14 @@ export default function Commandes() {
                   {!isClient && <td>{o.client_name}<span className="sub">{o.phone}</span></td>}
                   <td>{o.quantity}</td>
                   <td>{fmtDA(o.price)}</td>
-                  <td><Badge map={ORDER_STATUS} value={o.status} />{o.validated_by_name && <span className="sub">par {o.validated_by_name}</span>}</td>
+                  <td><Badge map={ORDER_STATUS} value={o.status} />{(() => { const [t, act] = orderNext(o, me.role); return <span className={`next-hint ${act ? '' : 'wait'}`}>{t}</span>; })()}</td>
                   <td>{fmtDate(o.created_at)}</td>
                   <td className="row-actions">
                     {isCommercial && o.status === 'en_attente' && <>
-                      <button className="btn btn-dark btn-xs" onClick={() => run(() => api(`/orders/${o.id}/validate`, { method: 'POST' }), 'Commande validée → recouvrement', reload)}>Valider</button>
+                      <button className="btn btn-dark btn-xs" onClick={() => run(() => api(`/orders/${o.id}/validate`, { method: 'POST' }), 'Commande validée : le recouvrement encaisse', reload)}>Valider</button>
                       <button className="btn btn-ghost btn-xs" onClick={() => run(() => api(`/orders/${o.id}/cancel`, { method: 'POST' }), 'Commande annulée', reload)}>Annuler</button>
                     </>}
-                    {me.role === 'recouvrement' && o.status === 'recouvrement' && <button className="btn btn-ok btn-xs" onClick={() => run(() => api(`/orders/${o.id}/paid`, { method: 'POST' }), 'Paiement encaissé', reload)}>Encaissée</button>}
+                    {me.role === 'recouvrement' && o.status === 'recouvrement' && <button className="btn btn-ok btn-xs" onClick={() => run(() => api(`/orders/${o.id}/paid`, { method: 'POST' }), 'Encaissée : tâche de production créée', reload)}>Encaissée</button>}
                   </td>
                 </tr>
               ))}

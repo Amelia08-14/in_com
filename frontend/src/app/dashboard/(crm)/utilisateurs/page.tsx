@@ -71,13 +71,9 @@ export default function Utilisateurs() {
   const { data: rows, reload } = useData<any[]>('/users');
   const [edit, setEdit] = useState<any>(null);
   const [create, setCreate] = useState(false);
-  const remove = (u: any) => {
-    if (!confirm(`Supprimer le compte de ${u.name} ? S’il a déjà un historique, il sera seulement désactivé.`)) return;
-    run(() => api(`/users/${u.id}`, { method: 'DELETE' }), 'Compte supprimé ou désactivé', reload);
-  };
   return (
     <>
-      <PageHead title="Utilisateurs" sub="Comptes de l’équipe et rôles. Modifiez un compte pour corriger son e-mail ou réinitialiser son mot de passe."
+      <PageHead title="Utilisateurs" sub="Comptes de l’équipe et rôles. Un départ se gère en désactivant le compte : son historique, ses clients et ses dossiers signés restent en place."
         actions={<button className="btn btn-primary" onClick={() => setCreate(true)}>+ Nouvel utilisateur</button>} />
       <div className="table-wrap">
         <table className="t">
@@ -89,10 +85,10 @@ export default function Utilisateurs() {
                 <td>{u.active ? <span className="badge ok">Actif</span> : <span className="badge neutral">Désactivé</span>}</td>
                 <td className="row-actions">
                   <button className="btn btn-dark btn-xs" onClick={() => setEdit(u)}>Modifier</button>
-                  {u.id !== me.id && <>
-                    <button className="btn btn-ghost btn-xs" onClick={() => run(() => api(`/users/${u.id}`, { method: 'PATCH', body: { active: u.active ? 0 : 1 } }), 'Mis à jour', reload)}>{u.active ? 'Désactiver' : 'Réactiver'}</button>
-                    <button className="btn btn-ghost btn-xs danger-text" onClick={() => remove(u)}>Supprimer</button>
-                  </>}
+                  {u.id !== me.id && (
+                    <button className="btn btn-ghost btn-xs" onClick={() => (!u.active || confirm(`Désactiver le compte de ${u.name} ? La personne ne pourra plus se connecter ; tout son historique est conservé.`))
+                      && run(() => api(`/users/${u.id}`, { method: 'PATCH', body: { active: u.active ? 0 : 1 } }), u.active ? 'Compte désactivé, historique conservé' : 'Compte réactivé', reload)}>{u.active ? 'Désactiver' : 'Réactiver'}</button>
+                  )}
                 </td>
               </tr>
             ))}

@@ -3,6 +3,7 @@ const router = require('express').Router();
 const { q, one } = require('../db');
 const { allow, COMMERCIAL } = require('../auth');
 const { notify, notifyRole, wrap, HttpError } = require('../util');
+const { signClient, markLeadHandled } = require('../flow');
 
 const MANAGERS = ['admin', 'responsable_commercial'];
 const isManager = (u) => MANAGERS.includes(u.role);
@@ -109,19 +110,6 @@ router.get('/sectors', wrap(async (req, res) => {
 }));
 
 // ───────── Reporting quotidien ─────────
-async function createDossierFromSignature(prospectId, userId, documentsUrl) {
-  const p = await one('SELECT * FROM prospects WHERE id=?', [prospectId]);
-  await q("UPDATE prospects SET label='client', documents_url=COALESCE(?, documents_url) WHERE id=?", [documentsUrl, prospectId]);
-  const offer = p.offer_id ? await one('SELECT * FROM offers WHERE id=?', [p.offer_id]) : null;
-  const r = await q(
-    "INSERT INTO dossiers (prospect_id, offer_id, title, signed_by, status, amount, payment_mode) VALUES (?,?,?,?, 'signe', ?, ?)",
-    [prospectId, p.offer_id, `${p.name} — ${offer ? 'Formule ' + offer.name : 'Prestation'}`, userId, offer ? offer.price_month : 0,
-      (await one('SELECT role FROM users WHERE id=?', [userId])).role === 'commercial_terrain' ? 'terrain' : 'bureau']);
-  await q("INSERT INTO dossier_history (dossier_id, user_id, status, note) VALUES (?,?, 'signe', 'Signature commerciale')", [r.insertId, userId]);
-  await notifyRole(['responsable_communication', 'admin'], `Nouveau dossier signé : ${p.name} — paiement à vérifier`, '/dashboard/dossiers');
-  return r.insertId;
-}
-
 router.post('/reports', allow('commercial_sedentaire', 'commercial_terrain', 'responsable_commercial'), wrap(async (req, res) => {
   const u = req.user;
   const { prospect_id, prospect, reason, notes, documents_url } = req.body;
@@ -129,7 +117,11 @@ router.post('/reports', allow('commercial_sedentaire', 'commercial_terrain', 're
   const channel = u.role === 'commercial_terrain' ? 'visite'
     : isManager(u) && ['appel', 'visite'].includes(req.body.channel) ? req.body.channel : 'appel';
   if (!reason) throw new HttpError(400, 'Raison obligatoire');
-  if (reason === 'signe' && !documents_url) throw new HttpError(400, 'Documents obligatoires pour un signé (lien Drive ou photos : contrat, registre de commerce, agrément)');
+  // « Client signé » : formule et documents exigés avant tout enregistrement
+  if (reason === 'signe' && (!documents_url || !req.body.offer_id)) {
+    throw new HttpError(400, !documents_url ? 'Documents obligatoires pour un client signé (lien Drive ou photos : contrat, registre de commerce, agrément)'
+      : 'Choisissez la formule signée : une formule du site ou une offre personnalisée');
+  }
 
   let pid = prospect_id;
   let isNew = false;
@@ -151,6 +143,8 @@ router.post('/reports', allow('commercial_sedentaire', 'commercial_terrain', 're
 
   await q('INSERT INTO reports (user_id, prospect_id, channel, reason, notes, documents_url) VALUES (?,?,?,?,?,?)',
     [u.id, pid, channel, reason, notes || null, documents_url || null]);
+  // Le premier appel ou la première visite clôt la demande « à rappeler »
+  await markLeadHandled(pid);
 
   const effects = [];
   // Règles automatiques du CRM
@@ -168,7 +162,7 @@ router.post('/reports', allow('commercial_sedentaire', 'commercial_terrain', 're
   if (reason === 'deal_terrain') {
     const d = await q("INSERT INTO deals (prospect_id, type, created_by, status, notes) VALUES (?, 'terrain', ?, 'a_attribuer', ?)", [pid, u.id, notes || null]);
     await q("INSERT INTO deal_history (deal_id, user_id, action) VALUES (?,?, 'creation')", [d.insertId, u.id]);
-    await notifyRole(['responsable_commercial', 'admin'], `Deal terrain à attribuer : ${before.name}`, '/dashboard/deals');
+    await notifyRole('responsable_commercial', `Deal terrain à attribuer : ${before.name}. Choisissez le commercial terrain dans Deals.`, '/dashboard/deals');
     effects.push('Deal terrain créé : transmis au responsable pour attribution');
   }
   if (reason === 'deal_bureau') {
@@ -177,8 +171,8 @@ router.post('/reports', allow('commercial_sedentaire', 'commercial_terrain', 're
     effects.push('Deal bureau créé et attribué : à programmer');
   }
   if (reason === 'signe') {
-    await createDossierFromSignature(pid, u.id, documents_url);
-    effects.push('Signé : dossier transmis au responsable communication');
+    await signClient(pid, u.id, { documents_url, offer_id: req.body.offer_id, service_type: req.body.service_type });
+    effects.push('Client signé : dossier créé. Le recouvrement confirme le paiement, puis la production démarre toute seule. Vous serez prévenu.');
   }
   res.json({ ok: true, prospect_id: pid, effects });
 }));
@@ -232,7 +226,7 @@ router.post('/deals/:id/assign', allow('responsable_commercial'), wrap(async (re
   const status = ['a_attribuer', 'a_relancer'].includes(deal.status) ? 'attribue' : deal.status;
   await q('UPDATE deals SET assigned_to=?, status=? WHERE id=?', [target.id, status, deal.id]);
   await q("INSERT INTO deal_history (deal_id, user_id, action, detail) VALUES (?,?, 'attribution', ?)", [deal.id, req.user.id, `→ ${target.name}`]);
-  if (target.id !== req.user.id) await notify(target.id, `Nouveau deal attribué : ${deal.name}`, '/dashboard/deals');
+  if (target.id !== req.user.id) await notify(target.id, `Nouveau deal : ${deal.name}. Appelez le prospect et programmez le rendez-vous dans Deals.`, '/dashboard/deals');
   res.json({ ok: true });
 }));
 
@@ -274,7 +268,9 @@ router.post('/deals/:id/outcome', allow(...COMMERCIAL), wrap(async (req, res) =>
   if (!deal) throw new HttpError(404, 'Deal introuvable');
   if (!isManager(req.user) && deal.assigned_to !== req.user.id) throw new HttpError(403, 'Deal non attribué');
   if (!['reprogrammer', 'gagne', 'perdu', 'a_relancer'].includes(outcome)) throw new HttpError(400, 'Issue invalide');
-  if (outcome === 'gagne' && !documents_url) throw new HttpError(400, 'Documents obligatoires pour un deal gagné');
+  if (outcome === 'gagne' && (!documents_url || !req.body.offer_id)) {
+    throw new HttpError(400, !documents_url ? 'Documents obligatoires pour un client signé' : 'Choisissez la formule signée : une formule du site ou une offre personnalisée');
+  }
   if (outcome === 'reprogrammer') {
     if (!scheduled_at) throw new HttpError(400, 'Nouvelle date obligatoire');
     await q("UPDATE deals SET scheduled_at=?, status='programme' WHERE id=?", [scheduled_at.replace('T', ' '), deal.id]);
@@ -285,9 +281,11 @@ router.post('/deals/:id/outcome', allow(...COMMERCIAL), wrap(async (req, res) =>
   const channel = req.user.role === 'commercial_terrain' ? 'visite' : 'appel';
   await q("INSERT INTO reports (user_id, prospect_id, channel, reason, entry_type, outcome, notes, documents_url) VALUES (?,?,?, 'issue_deal', 'deal', ?, ?, ?)",
     [req.user.id, deal.prospect_id, channel, outcome, notes || null, documents_url || null]);
-  if (outcome === 'gagne') await createDossierFromSignature(deal.prospect_id, req.user.id, documents_url);
+  await markLeadHandled(deal.prospect_id);
+  if (outcome === 'gagne') await signClient(deal.prospect_id, req.user.id, { documents_url, offer_id: req.body.offer_id, service_type: req.body.service_type });
   if (outcome === 'a_relancer' && deal.created_by !== req.user.id) {
-    await notify(deal.created_by, 'Un deal revient chez vous à relancer', '/dashboard/deals');
+    const p = await one('SELECT name FROM prospects WHERE id=?', [deal.prospect_id]);
+    await notify(deal.created_by, `Deal à relancer : ${p?.name}. Rappelez le prospect et programmez une nouvelle date dans Deals.`, '/dashboard/deals');
   }
   res.json({ ok: true });
 }));
@@ -307,4 +305,3 @@ router.get('/calendar', allow(...COMMERCIAL), wrap(async (req, res) => {
 }));
 
 module.exports = router;
-module.exports.createDossierFromSignature = createDossierFromSignature;

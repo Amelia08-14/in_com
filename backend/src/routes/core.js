@@ -3,7 +3,8 @@ const router = require('express').Router();
 const bcrypt = require('bcryptjs');
 const { q, one } = require('../db');
 const { sign, auth, allow, rolesOf, ROLES } = require('../auth');
-const { notifyRole, wrap, HttpError, limit, ymd } = require('../util');
+const { notify, wrap, HttpError, limit, ymd } = require('../util');
+const { newLead } = require('../flow');
 const { ACTIVITIES } = require('../catalog');
 
 // ───────── Public ─────────
@@ -19,9 +20,8 @@ router.post('/public/contact', wrap(async (req, res) => {
   if (!name || (!phone && !email)) throw new HttpError(400, 'Nom et téléphone ou e-mail obligatoires');
   // Le formulaire du site alimente directement l'Univers (pipeline « site »)
   const p = await q("INSERT INTO prospects (name, contact_name, phone, email, source) VALUES (?,?,?,?, 'site')", [company || name, name, phone, email]);
-  await q('INSERT INTO contact_requests (name, company, phone, email, offer, message, prospect_id) VALUES (?,?,?,?,?,?,?)',
-    [name, company, phone, email, offer, message, p.insertId]);
-  await notifyRole(['commercial_sedentaire', 'responsable_commercial', 'admin'], `Nouvelle demande via le site : ${company || name}`, '/dashboard/univers');
+  // Un commercial responsable reçoit « À rappeler sous 24 h »
+  await newLead({ prospectId: p.insertId, name, company, phone, email, offer, message, origin: 'formulaire du site' });
   res.json({ ok: true });
 }));
 
@@ -54,9 +54,9 @@ router.post('/auth/register', limit(10, 60 * 60 * 1000), wrap(async (req, res) =
     throw e;
   }
   // Fiche dans l'Univers, rattachée au compte : les commerciaux voient ce nouveau contact
-  await q("INSERT INTO prospects (name, contact_name, specialty, phone, email, source, client_user_id) VALUES (?,?,?,?,?, 'site', ?)",
+  const p = await q("INSERT INTO prospects (name, contact_name, specialty, phone, email, source, client_user_id) VALUES (?,?,?,?,?, 'site', ?)",
     [company || name, name, activity, phone, email, r.insertId]);
-  await notifyRole(['commercial_sedentaire', 'responsable_commercial', 'admin'], `Nouveau compte ${type} sur le site : ${company || name}`, '/dashboard/univers');
+  await newLead({ prospectId: p.insertId, name, company, phone, email, offer: 'inscription', message: `Compte ${type} créé sur le site · ${activity}`, origin: `nouveau compte ${type}` });
   const user = { id: r.insertId, name, role: 'client', email };
   res.json({ token: sign(user), user });
 }));
@@ -251,9 +251,16 @@ router.patch('/users/:id', allow('admin'), wrap(async (req, res) => {
   res.json({ ok: true });
 }));
 
-// Suppression d'un compte. S'il a déjà un historique (deals, dossiers, tâches…), il est désactivé à la place.
+// Un compte de l'équipe n'est jamais supprimé : il est désactivé, et tout son historique (reporting, clients,
+// dossiers signés, tâches) reste en place. Seul un compte client sans historique peut être supprimé.
 router.delete('/users/:id', allow('admin'), wrap(async (req, res) => {
   if (Number(req.params.id) === req.user.id) throw new HttpError(400, 'Vous ne pouvez pas supprimer votre propre compte');
+  const target = await one('SELECT role FROM users WHERE id=?', [req.params.id]);
+  if (!target) throw new HttpError(404, 'Compte introuvable');
+  if (target.role !== 'client') {
+    await q('UPDATE users SET active=0 WHERE id=?', [req.params.id]);
+    return res.json({ deleted: false, deactivated: true });
+  }
   try {
     await q('DELETE FROM users WHERE id=?', [req.params.id]);
     res.json({ deleted: true });
@@ -359,7 +366,20 @@ router.post('/notifications/read', wrap(async (req, res) => {
 }));
 
 router.get('/contact-requests', allow('responsable_commercial', 'commercial_sedentaire'), wrap(async (req, res) => {
-  res.json(await q('SELECT * FROM contact_requests ORDER BY created_at DESC LIMIT 200'));
+  const mine = !['admin', 'responsable_commercial'].includes(req.user.role);
+  res.json(await q(
+    `SELECT r.*, u.name AS assigned_name, p.label FROM contact_requests r LEFT JOIN users u ON u.id=r.assigned_to LEFT JOIN prospects p ON p.id=r.prospect_id
+     ${mine ? 'WHERE r.assigned_to=?' : ''} ORDER BY r.handled_at IS NULL DESC, r.created_at DESC LIMIT 300`, mine ? [req.user.id] : []));
+}));
+
+router.post('/contact-requests/:id/assign', allow('responsable_commercial'), wrap(async (req, res) => {
+  const r = await one('SELECT * FROM contact_requests WHERE id=?', [req.params.id]);
+  if (!r) throw new HttpError(404, 'Demande introuvable');
+  const u = await one(`SELECT id FROM users WHERE id=? AND active=1 AND (role IN ('commercial_sedentaire','commercial_terrain','responsable_commercial','admin') OR extra_roles REGEXP 'commercial')`, [req.body.user_id]);
+  if (!u) throw new HttpError(400, 'Commercial invalide');
+  await q('UPDATE contact_requests SET assigned_to=? WHERE id=?', [u.id, r.id]);
+  if (u.id !== req.user.id) await notify(u.id, `À rappeler sous 24 h : ${r.company || r.name}${r.phone ? ` (${r.phone})` : ''}. Déclarez ensuite l’appel dans Reporting.`, '/dashboard/demandes');
+  res.json({ ok: true });
 }));
 
 // ───────── Tableau de bord par rôle ─────────
@@ -465,10 +485,10 @@ router.get('/dashboard', wrap(async (req, res) => {
     const by = Object.fromEntries(pipe.map((r) => [r.status, r.n]));
     add('Clients actifs', await count("SELECT COUNT(*) n FROM prospects WHERE label='client'"));
     add('Revenu récurrent', (await count("SELECT COALESCE(SUM(o.price_month),0) n FROM prospects p JOIN offers o ON o.id=p.offer_id WHERE p.label='client'")).toLocaleString('fr-FR') + ' DA', 'HT / mois');
-    add('Paiements à vérifier', by.signe || 0, 'Statut Signé', by.signe ? 'warn' : null);
-    add('Création en cours', by.creation_en_cours || 0);
-    add('En attente de validation', by.en_attente_validation || 0, 'relance sous 48h');
-    add('Modifications demandées', by.modification_demandee || 0, null, by.modification_demandee ? 'warn' : null);
+    add('Paiements à encaisser', by.signe || 0, 'dossiers signés', by.signe ? 'warn' : null);
+    add('En production', by.creation_en_cours || 0);
+    add('Livrés', by.livre || 0, 'mois ou projet terminé');
+    add('Chez le client pour validation', await count("SELECT COUNT(*) n FROM tasks WHERE status='validation_client'"), 'relance sous 48h');
     add('Validation du 1er coup', await firstTimeRate(), 'tâches validées sans modification');
     return res.json({ kpis, pipeline: pipe });
   }
@@ -476,7 +496,7 @@ router.get('/dashboard', wrap(async (req, res) => {
     add('Deals à attribuer', await count("SELECT COUNT(*) n FROM deals WHERE status='a_attribuer'"), null, 'warn');
     add('Appels / visites du jour', await count('SELECT COUNT(*) n FROM reports WHERE DATE(created_at)=CURDATE()'));
     add('Signés ce mois', await count("SELECT COUNT(*) n FROM dossiers WHERE DATE_FORMAT(created_at,'%Y-%m')=DATE_FORMAT(CURDATE(),'%Y-%m')"));
-    add('Demandes site (7 j)', await count('SELECT COUNT(*) n FROM contact_requests WHERE created_at>=NOW()-INTERVAL 7 DAY'));
+    add('Demandes à rappeler', await count('SELECT COUNT(*) n FROM contact_requests WHERE handled_at IS NULL'), 'site, inscriptions et paniers', 'warn');
     add('Tickets SAV ouverts', await count("SELECT COUNT(*) n FROM tickets WHERE department='commercial' AND status<>'resolu'"));
     const team = await q(
       `SELECT u.name, u.role, SUM(DATE(r.created_at)=CURDATE()) today, COUNT(r.id) month
@@ -490,7 +510,10 @@ router.get('/dashboard', wrap(async (req, res) => {
     add('Deals à programmer', await count("SELECT COUNT(*) n FROM deals WHERE assigned_to=? AND status='attribue'", [id]));
     add('À relancer', await count("SELECT COUNT(*) n FROM deals WHERE (assigned_to=? OR created_by=?) AND status='a_relancer'", [id, id]));
     add('Signés ce mois', await count("SELECT COUNT(*) n FROM dossiers WHERE signed_by=? AND DATE_FORMAT(created_at,'%Y-%m')=DATE_FORMAT(CURDATE(),'%Y-%m')", [id]));
-    if (u.role === 'commercial_sedentaire') add('Commandes à valider', await count("SELECT COUNT(*) n FROM orders WHERE status='en_attente'"));
+    if (u.role === 'commercial_sedentaire') {
+      add('Demandes à rappeler', await count('SELECT COUNT(*) n FROM contact_requests WHERE assigned_to=? AND handled_at IS NULL', [id]), 'sous 24 h', 'warn');
+      add('Commandes à valider', await count("SELECT COUNT(*) n FROM orders WHERE status='en_attente'"));
+    }
     const today = await q(
       `SELECT d.id, d.scheduled_at, d.kind, p.name AS prospect_name, p.phone, p.address FROM deals d JOIN prospects p ON p.id=d.prospect_id
        WHERE d.assigned_to=? AND d.status='programme' AND DATE(d.scheduled_at)=CURDATE() ORDER BY d.scheduled_at`, [id]);
@@ -499,8 +522,8 @@ router.get('/dashboard', wrap(async (req, res) => {
   if (u.role === 'charge_clientele') {
     add('Clients suivis', await count('SELECT COUNT(DISTINCT prospect_id) n FROM dossiers WHERE cc_id=?', [id]));
     add('À présenter', await count("SELECT COUNT(*) n FROM tasks t WHERE t.status='validation_client' AND EXISTS (SELECT 1 FROM client_assignments ca WHERE ca.prospect_id=t.prospect_id AND ca.user_id=?)", [id]), null, 'accent');
-    add('En attente client > 48h', await count("SELECT COUNT(*) n FROM dossiers WHERE cc_id=? AND status='en_attente_validation' AND validated_at IS NULL AND updated_at < NOW()-INTERVAL 48 HOUR", [id]), 'relancer par un 2e canal', 'warn');
-    add('Modifications en cours', await count("SELECT COUNT(*) n FROM dossiers WHERE cc_id=? AND status='modification_demandee'", [id]));
+    add('En attente client > 48h', await count("SELECT COUNT(*) n FROM tasks t WHERE t.status='validation_client' AND t.updated_at < NOW()-INTERVAL 48 HOUR AND EXISTS (SELECT 1 FROM client_assignments ca WHERE ca.prospect_id=t.prospect_id AND ca.user_id=?)", [id]), 'relancer par un 2e canal', 'warn');
+    add('Modifications en cours', await count("SELECT COUNT(*) n FROM tasks t WHERE t.status='modification_demandee' AND EXISTS (SELECT 1 FROM client_assignments ca WHERE ca.prospect_id=t.prospect_id AND ca.user_id=?)", [id]));
     return res.json({ kpis });
   }
   if (u.role === 'responsable_technique') {
@@ -517,6 +540,7 @@ router.get('/dashboard', wrap(async (req, res) => {
     return res.json({ kpis });
   }
   if (u.role === 'recouvrement') {
+    add('Dossiers à encaisser', await count("SELECT COUNT(*) n FROM dossiers WHERE status='signe' AND offer_id IS NOT NULL"), 'confirmez le paiement : la production démarre', 'warn');
     add('Commandes à encaisser', await count("SELECT COUNT(*) n FROM orders WHERE status='recouvrement'"), null, 'accent');
     add('Montant à encaisser', (await count("SELECT COALESCE(SUM(price),0) n FROM orders WHERE status='recouvrement'")).toLocaleString('fr-FR') + ' DA');
     add('Encaissées ce mois', await count("SELECT COUNT(*) n FROM orders WHERE status='payee' AND DATE_FORMAT(created_at,'%Y-%m')=DATE_FORMAT(CURDATE(),'%Y-%m')"));

@@ -1,9 +1,10 @@
-// Dossiers clients : Signé → Paiement confirmé → Création en cours → En attente de validation
-//   → (Modification demandée ↺) → Livré (développement) / Publié (photo, vidéo, infographie)
+// Dossiers clients : Signé → En production → Livré.
+// Le paiement confirmé lance la production ; la validation se fait conception par conception (tâches) ;
+// le dossier passe tout seul en Livré quand le mois (abonnement) ou le projet est produit (voir flow.js).
 const router = require('express').Router();
 const { q, one } = require('../db');
 const { allow } = require('../auth');
-const { notify, notifyRole, wrap, HttpError } = require('../util');
+const { notify, wrap, HttpError } = require('../util');
 const { launchProduction, generateDailyTasks } = require('./tasks');
 
 async function log(dossierId, userId, status, note = null) {
@@ -11,10 +12,15 @@ async function log(dossierId, userId, status, note = null) {
 }
 
 async function getDossier(id) {
-  const d = await one('SELECT d.*, p.name AS client_name, p.client_user_id FROM dossiers d JOIN prospects p ON p.id=d.prospect_id WHERE d.id=?', [id]);
+  const d = await one(
+    `SELECT d.*, p.name AS client_name, p.client_user_id, s.name AS signed_by_name
+     FROM dossiers d JOIN prospects p ON p.id=d.prospect_id LEFT JOIN users s ON s.id=d.signed_by WHERE d.id=?`, [id]);
   if (!d) throw new HttpError(404, 'Dossier introuvable');
   return d;
 }
+
+// Le recouvrement voit tous les dossiers : c'est lui qui encaisse et confirme les paiements
+const FULL_ACCESS = ['admin', 'responsable_communication', 'responsable_commercial', 'responsable_technique', 'recouvrement'];
 
 router.get('/', wrap(async (req, res) => {
   const u = req.user;
@@ -23,8 +29,7 @@ router.get('/', wrap(async (req, res) => {
   if (u.role === 'charge_clientele') { where.push('d.cc_id=?'); params.push(u.id); }
   else if (['commercial_sedentaire', 'commercial_terrain'].includes(u.role)) { where.push('d.signed_by=?'); params.push(u.id); }
   else if (u.role === 'client') { where.push('p.client_user_id=?'); params.push(u.id); }
-  else if (u.role === 'community_manager') { where.push("(d.validated_at IS NOT NULL OR d.status='publie') AND d.service_type<>'developpement'"); }
-  else if (!['admin', 'responsable_communication', 'responsable_commercial', 'responsable_technique'].includes(u.role)) {
+  else if (!FULL_ACCESS.includes(u.role)) {
     where.push('EXISTS (SELECT 1 FROM client_assignments ca WHERE ca.prospect_id=d.prospect_id AND ca.user_id=?)'); params.push(u.id);
   }
   if (req.query.status) { where.push('d.status=?'); params.push(req.query.status); }
@@ -34,8 +39,6 @@ router.get('/', wrap(async (req, res) => {
      LEFT JOIN users s ON s.id=d.signed_by LEFT JOIN users c ON c.id=d.cc_id
      WHERE ${where.join(' AND ')} ORDER BY d.updated_at DESC`, params));
 }));
-
-const FULL_ACCESS = ['admin', 'responsable_communication', 'responsable_commercial', 'responsable_technique'];
 
 router.get('/:id', wrap(async (req, res) => {
   const d = await getDossier(req.params.id);
@@ -48,6 +51,14 @@ router.get('/:id', wrap(async (req, res) => {
   const history = await q('SELECT h.*, u.name AS user_name FROM dossier_history h LEFT JOIN users u ON u.id=h.user_id WHERE dossier_id=? ORDER BY h.created_at DESC', [d.id]);
   const offer = d.offer_id ? await one('SELECT id, name, price_month, posts_month, stories_month, reels_month, custom_dossier_id FROM offers WHERE id=?', [d.offer_id]) : null;
   const items = await q('SELECT id, service_id, label, quantity, unit_price, total FROM dossier_items WHERE dossier_id=? ORDER BY id', [d.id]);
+  // Avancement du mois (abonnement) ou du projet : de quoi dire à chacun où en est la production
+  const monthly = d.service_type === 'abonnement';
+  const progress = await one(
+    `SELECT COUNT(*) total, SUM(status IN ('validee','publiee')) done, SUM(status='publiee') published,
+       SUM(status IN ('validation_technique','validation_client')) in_review, SUM(status IN ('a_faire','en_cours','modification_demandee')) todo
+     FROM tasks WHERE prospect_id=? ${monthly ? "AND DATE_FORMAT(due_date,'%Y-%m')=DATE_FORMAT(CURDATE(),'%Y-%m')" : 'AND (dossier_id=? OR (dossier_id IS NULL AND created_at>=?))'}`,
+    monthly ? [d.prospect_id] : [d.prospect_id, d.id, d.created_at]);
+  const quota = offer ? (offer.posts_month || 0) + (offer.stories_month || 0) + (offer.reels_month || 0) : 0;
   // Coordonnées du client : l'équipe attribuée le contacte directement
   const client = u.role === 'client' ? null : await one(
     `SELECT p.name, p.contact_name, p.phone, p.email, p.address, p.maps_url, p.specialty, p.documents_url, p.drive_url,
@@ -56,12 +67,13 @@ router.get('/:id', wrap(async (req, res) => {
   const tasks = u.role === 'client' ? [] : await q(
     `SELECT t.id, t.type, t.theme, t.brief, t.status, t.due_date, u.name AS assigned_name FROM tasks t JOIN users u ON u.id=t.assigned_to
      WHERE t.prospect_id=? ORDER BY t.due_date DESC, t.id DESC LIMIT 50`, [d.prospect_id]);
-  res.json({ ...d, offer, items, history, team, client, tasks });
+  const carts = u.role === 'client' ? [] : await q('SELECT id, code, status FROM carts WHERE dossier_id=?', [d.id]);
+  res.json({ ...d, offer, items, history, team, client, tasks, carts, progress: { ...progress, quota, monthly } });
 }));
 
 // Correction d'un dossier (direction, responsable communication) : formule, montant, paiement,
 // prestation et statut, y compris retour à une étape précédente. Chaque changement de statut est historisé.
-const STATUSES = ['signe', 'paiement_confirme', 'creation_en_cours', 'en_attente_validation', 'modification_demandee', 'livre', 'publie'];
+const STATUSES = ['signe', 'creation_en_cours', 'livre'];
 // Offre personnalisée : quotas mensuels sur mesure (posts, stories, reels, prix) et services choisis avec leur nombre.
 // Elle est enregistrée comme une formule propre au dossier, jamais affichée sur le site.
 const int = (v, max = 100000000) => Math.min(max, Math.max(0, parseInt(v, 10) || 0));
@@ -139,8 +151,6 @@ router.patch('/:id', allow('responsable_communication'), wrap(async (req, res) =
   if (b.status && b.status !== d.status) {
     if (!STATUSES.includes(b.status)) throw new HttpError(400, 'Statut invalide');
     f.status = b.status;
-    // Revenir avant la validation client efface la validation déjà donnée
-    if (STATUSES.indexOf(b.status) < STATUSES.indexOf('en_attente_validation')) f.validated_at = null;
   }
   const keys = Object.keys(f);
   if (!keys.length) throw new HttpError(400, 'Aucune modification');
@@ -153,10 +163,6 @@ router.patch('/:id', allow('responsable_communication'), wrap(async (req, res) =
     // Passé à « payé » avant la production : même lancement automatique que « Confirmer le paiement »
     const status = f.status || d.status;
     if (f.payment_status === 'paye' && ['signe', 'paiement_confirme'].includes(status)) {
-      if (status === 'signe') {
-        await q("UPDATE dossiers SET status='paiement_confirme' WHERE id=?", [d.id]);
-        await log(d.id, req.user.id, 'paiement_confirme', 'Paiement reçu');
-      }
       launch = await launchProduction(d.id, req.user.id);
     }
   }
@@ -174,7 +180,7 @@ router.put('/:id/drive', allow('responsable_technique'), wrap(async (req, res) =
   await q('UPDATE prospects SET drive_url=? WHERE id=?', [url || null, d.prospect_id]);
   if (url && url !== before?.drive_url) {
     await log(d.id, req.user.id, d.status, 'Dossier Drive de références partagé avec le client');
-    if (d.client_user_id) await notify(d.client_user_id, 'Votre dossier partagé est prêt : déposez-y vos logos, photos et références', '/espace-client/profil');
+    if (d.client_user_id) await notify(d.client_user_id, 'Votre dossier partagé est prêt : déposez-y vos logos, photos et références.', '/espace-client/profil');
   }
   res.json({ ok: true, drive_url: url || null });
 }));
@@ -184,15 +190,16 @@ router.delete('/:id', allow(), wrap(async (req, res) => {
   res.json({ ok: true });
 }));
 
-// Responsable communication : vérifie le paiement
-router.post('/:id/confirm-payment', allow('responsable_communication'), wrap(async (req, res) => {
+// Paiement : un seul geste « Confirmer le paiement » (recouvrement, responsable communication, direction).
+// La production démarre aussitôt : équipe attribuée selon la charge, tâches réparties selon la formule.
+router.post('/:id/confirm-payment', allow('responsable_communication', 'recouvrement'), wrap(async (req, res) => {
   const d = await getDossier(req.params.id);
-  if (!d.offer_id) throw new HttpError(400, 'Choisissez d’abord la formule du client (formule du site ou offre personnalisée) dans « Modifier le dossier »');
-  if (d.status !== 'signe') throw new HttpError(400, 'Le dossier doit être au statut Signé');
-  await q("UPDATE dossiers SET status='paiement_confirme', payment_status='paye', payment_confirmed_at=NOW(), amount=COALESCE(?, amount) WHERE id=?", [req.body.amount || null, d.id]);
-  await log(d.id, req.user.id, 'paiement_confirme', req.body.note);
-  if (d.signed_by) await notify(d.signed_by, `Paiement confirmé pour ${d.client_name}`, '/dashboard/dossiers');
-  // Dès le paiement : équipe attribuée selon la charge et tâches réparties selon la formule
+  if (!d.offer_id) throw new HttpError(400, 'Le responsable communication doit d’abord définir la formule du client (formule du site ou offre personnalisée)');
+  if (d.status !== 'signe') throw new HttpError(400, 'Le paiement de ce dossier est déjà confirmé');
+  const amount = req.body.amount !== undefined && req.body.amount !== '' ? Math.max(0, parseInt(req.body.amount, 10) || 0) : null;
+  const mode = ['bureau', 'terrain', 'virement'].includes(req.body.payment_mode) ? req.body.payment_mode : null;
+  await q("UPDATE dossiers SET payment_status='paye', payment_confirmed_at=NOW(), amount=COALESCE(?, amount), payment_mode=COALESCE(?, payment_mode) WHERE id=?", [amount, mode, d.id]);
+  await log(d.id, req.user.id, 'paiement_confirme', req.body.note || 'Paiement reçu');
   const launch = await launchProduction(d.id, req.user.id);
   res.json({ ok: true, launch });
 }));
@@ -228,8 +235,8 @@ router.post('/:id/assign', allow('responsable_communication'), wrap(async (req, 
     if (target && !current.some((c) => c.user_id === target)) {
       await q('INSERT IGNORE INTO client_assignments (prospect_id, user_id, role, assigned_by) VALUES (?,?,?,?)', [d.prospect_id, target, role, req.user.id]);
       await notify(target, role === 'charge_clientele'
-        ? `Nouveau client attribué : ${d.client_name} — premier contact sous 24h`
-        : `Vous intervenez sur ${d.client_name}`, role === 'charge_clientele' ? '/dashboard/dossiers' : '/dashboard/taches');
+        ? `Nouveau client attribué : ${d.client_name}. Appelez-le sous 24 h pour vous présenter.`
+        : `Vous intervenez sur ${d.client_name} : vos tâches arrivent dans Mes tâches.`, role === 'charge_clientele' ? '/dashboard/dossiers' : '/dashboard/taches');
     }
     if (role === 'charge_clientele') await q('UPDATE dossiers SET cc_id=? WHERE id=?', [target, d.id]);
   }
@@ -241,53 +248,6 @@ router.post('/:id/assign', allow('responsable_communication'), wrap(async (req, 
   // Un graphiste ajouté ou changé reçoit tout de suite les tâches du jour
   const created = await generateDailyTasks(new Date(), d.prospect_id);
   res.json({ ok: true, created });
-}));
-
-// CC : présente le travail au client
-router.post('/:id/submit', allow('charge_clientele', 'responsable_communication'), wrap(async (req, res) => {
-  const d = await getDossier(req.params.id);
-  if (!['creation_en_cours', 'modification_demandee'].includes(d.status)) throw new HttpError(400, 'Rien à présenter');
-  await q("UPDATE dossiers SET status='en_attente_validation', validated_at=NULL, next_followup=DATE_ADD(CURDATE(), INTERVAL 2 DAY) WHERE id=?", [d.id]);
-  await log(d.id, req.user.id, 'en_attente_validation', req.body.note);
-  if (d.client_user_id) await notify(d.client_user_id, `Un livrable vous attend pour validation : ${d.title}`, '/espace-client/projets');
-  res.json({ ok: true });
-}));
-
-// Client ou CC : décision
-router.post('/:id/decision', allow('client', 'charge_clientele'), wrap(async (req, res) => {
-  const d = await getDossier(req.params.id);
-  if (req.user.role === 'client' && d.client_user_id !== req.user.id) throw new HttpError(403, 'Accès refusé');
-  if (d.status !== 'en_attente_validation' || d.validated_at) throw new HttpError(400, "Le dossier n'est pas en attente de validation");
-  const { decision, note } = req.body;
-  if (decision === 'modifier') {
-    if (!note) throw new HttpError(400, 'Note obligatoire pour une modification');
-    await q("UPDATE dossiers SET status='modification_demandee' WHERE id=?", [d.id]);
-    await log(d.id, req.user.id, 'modification_demandee', note);
-    await notify(d.cc_id, `Modification demandée sur ${d.title}`, '/dashboard/dossiers');
-  } else if (decision === 'valider') {
-    if (d.service_type === 'developpement') {
-      await q("UPDATE dossiers SET status='livre', validated_at=NOW() WHERE id=?", [d.id]);
-      await log(d.id, req.user.id, 'livre', 'Validé et livré au client');
-    } else {
-      await q('UPDATE dossiers SET validated_at=NOW() WHERE id=?', [d.id]);
-      await log(d.id, req.user.id, 'valide', 'Validé — transmis au CM pour publication');
-      const cms = await q("SELECT user_id FROM client_assignments WHERE prospect_id=? AND role='community_manager'", [d.prospect_id]);
-      if (cms.length) await notify(cms.map((c) => c.user_id), `Contenu validé à publier : ${d.title}`, '/dashboard/dossiers');
-      else await notifyRole('community_manager', `Contenu validé à publier : ${d.title}`, '/dashboard/dossiers');
-    }
-    await notifyRole(['responsable_communication', 'admin'], `Validation client : ${d.title}`, '/dashboard/dossiers');
-  } else throw new HttpError(400, 'Décision invalide');
-  res.json({ ok: true });
-}));
-
-// CM : publication
-router.post('/:id/publish', allow('community_manager', 'responsable_communication'), wrap(async (req, res) => {
-  const d = await getDossier(req.params.id);
-  if (!d.validated_at) throw new HttpError(400, 'Le contenu doit être validé par le client');
-  await q("UPDATE dossiers SET status='publie' WHERE id=?", [d.id]);
-  await log(d.id, req.user.id, 'publie', req.body.note);
-  if (d.client_user_id) await notify(d.client_user_id, `Publié : ${d.title}`, '/espace-client/projets');
-  res.json({ ok: true });
 }));
 
 module.exports = router;

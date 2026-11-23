@@ -4,7 +4,8 @@
 const crypto = require('crypto');
 const { q, one } = require('../db');
 const { auth, allow } = require('../auth');
-const { notify, notifyRole, wrap, HttpError } = require('../util');
+const { notify, wrap, HttpError } = require('../util');
+const { newLead, markLeadHandled, signClient } = require('../flow');
 
 // Prestations sur devis (pas de prix public)
 const DEVIS = {
@@ -107,9 +108,12 @@ pub.post('/public/carts', auth, wrap(async (req, res) => {
       [r.insertId, i.kind, i.ref, i.label, i.months, i.quantity, i.unit_price, i.total]);
   }
   await q("INSERT INTO cart_events (cart_id, status, note) VALUES (?, 'recue', 'Panier envoyé depuis le site')", [r.insertId]);
-  await q('INSERT INTO contact_requests (name, company, phone, email, offer, message, prospect_id) VALUES (?,?,?,?,?,?,?)',
-    [name, company, phone, email, offer ? offer.ref : 'panier', `Panier ${code} : ${items.map((i) => i.label).join(', ')}${message ? `\n${message}` : ''}`, p.insertId]);
-  await notifyRole(['commercial_sedentaire', 'responsable_commercial', 'admin'], `Nouveau panier ${code} : ${company || name}`, '/dashboard/paniers');
+  // Un commercial responsable dès l'arrivée : il devient le conseiller du client
+  const who = await newLead({
+    prospectId: p.insertId, name, company, phone, email, offer: offer ? offer.ref : 'panier', origin: `panier ${code}`, link: '/dashboard/paniers',
+    message: `Panier ${code} : ${items.map((i) => i.label).join(', ')}${message ? `\n${message}` : ''}`,
+  });
+  if (who) await q('UPDATE carts SET assigned_to=? WHERE id=?', [who.id, r.insertId]);
   res.json({ code });
 }));
 
@@ -169,8 +173,8 @@ crm.post('/carts', wrap(async (req, res) => {
       [r.insertId, i.kind, i.ref, i.label, i.months, i.quantity, i.unit_price, i.total]);
   }
   await q("INSERT INTO cart_events (cart_id, status, note, user_id) VALUES (?, 'recue', 'Demande de devis saisie par votre conseiller', ?)", [r.insertId, req.user.id]);
-  if (p.client_user_id) await notify(p.client_user_id, `Votre demande de devis ${code} est enregistrée`, '/espace-client/demandes');
-  await notifyRole('admin', `Demande de devis ${code} saisie par ${req.user.name} : ${p.name}`, '/dashboard/paniers');
+  if (p.client_user_id) await notify(p.client_user_id, `Votre demande de devis ${code} est enregistrée : votre conseiller vous recontacte.`, '/espace-client/demandes');
+  await markLeadHandled(p.id);
   res.json({ code, id: r.insertId });
 }));
 
@@ -196,19 +200,40 @@ crm.get('/carts/:id', wrap(async (req, res) => {
   res.json(c);
 }));
 
+// Étapes posées à la main avant la signature. « Confirmée », « En production » et « Livrée »
+// suivent le dossier : « Client signé » crée le dossier, le paiement lance la production, la livraison clôt le devis.
+const MANUAL = ['recue', 'contactee', 'devis_envoye', 'annulee'];
 crm.post('/carts/:id/status', wrap(async (req, res) => {
   const { status, note } = req.body || {};
-  if (!STATUS.includes(status)) throw new HttpError(400, 'Statut invalide');
+  if (!MANUAL.includes(status)) throw new HttpError(400, 'Cette étape suit le dossier : utilisez « Client signé »');
   const c = await one('SELECT * FROM carts WHERE id=?', [req.params.id]);
   if (!c) throw new HttpError(404, 'Panier introuvable');
-  if (['livree', 'annulee'].includes(c.status)) throw new HttpError(400, 'Ce panier est clôturé');
+  if (!['recue', 'contactee', 'devis_envoye'].includes(c.status)) throw new HttpError(400, 'Ce devis suit déjà son dossier');
   // Le premier commercial qui fait avancer le panier en devient le conseiller
   await q('UPDATE carts SET status=?, assigned_to=COALESCE(assigned_to, ?) WHERE id=?', [status, req.user.id, c.id]);
   await q('INSERT INTO cart_events (cart_id, status, note, user_id) VALUES (?,?,?,?)', [c.id, status, note || null, req.user.id]);
-  if (status === 'confirmee' && c.prospect_id) {
+  await markLeadHandled(c.prospect_id);
+  if (status === 'devis_envoye' && c.prospect_id) {
     await q("UPDATE prospects SET label='qualifie' WHERE id=? AND label='prospect'", [c.prospect_id]);
   }
+  if (c.user_id && status !== 'recue') {
+    const msg = { contactee: 'Votre conseiller a pris en charge votre demande', devis_envoye: 'Votre devis est prêt : votre conseiller vous l’a envoyé', annulee: 'Votre demande a été clôturée' }[status];
+    await notify(c.user_id, `${msg} (${c.code}).`, '/espace-client/demandes');
+  }
   res.json({ ok: true });
+}));
+
+// « Client signé » depuis le devis : formule et documents exigés, dossier créé, le devis suit ensuite le dossier
+crm.post('/carts/:id/sign', wrap(async (req, res) => {
+  const c = await one('SELECT * FROM carts WHERE id=?', [req.params.id]);
+  if (!c) throw new HttpError(404, 'Panier introuvable');
+  if (!['recue', 'contactee', 'devis_envoye'].includes(c.status)) throw new HttpError(400, 'Ce devis est déjà signé ou clôturé');
+  if (!c.prospect_id) throw new HttpError(400, 'Ce devis n’est rattaché à aucune fiche client');
+  const b = req.body || {};
+  const dossierId = await signClient(c.prospect_id, req.user.id, { documents_url: b.documents_url, offer_id: b.offer_id, service_type: b.service_type, cartId: c.id });
+  await q("INSERT INTO reports (user_id, prospect_id, channel, reason, notes, documents_url) VALUES (?,?, 'appel', 'signe', ?, ?)",
+    [req.user.id, c.prospect_id, `Devis ${c.code} signé`, b.documents_url]);
+  res.json({ ok: true, dossier_id: dossierId });
 }));
 
 crm.post('/carts/:id/assign', allow('admin', 'responsable_commercial'), wrap(async (req, res) => {
@@ -216,7 +241,7 @@ crm.post('/carts/:id/assign', allow('admin', 'responsable_commercial'), wrap(asy
   if (!u) throw new HttpError(400, 'Commercial invalide');
   const c = await one('SELECT code FROM carts WHERE id=?', [req.params.id]);
   await q('UPDATE carts SET assigned_to=? WHERE id=?', [u.id, req.params.id]);
-  await notify(u.id, `Panier ${c.code} vous est attribué`, '/dashboard/paniers');
+  await notify(u.id, `Panier ${c.code} vous est attribué : appelez le client sous 24 h.`, '/dashboard/paniers');
   res.json({ ok: true });
 }));
 

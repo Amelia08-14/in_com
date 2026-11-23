@@ -38,7 +38,7 @@ export const REASON_LABEL: Record<string, string> = {
   deal_bureau: 'Deal bureau',
   promesse: 'Promesse de signature',
   a_eviter: 'À éviter',
-  signe: 'Signé',
+  signe: 'Client signé',
   issue_deal: 'Issue de deal',
 };
 
@@ -51,17 +51,19 @@ export const DEAL_STATUS: L = {
   a_relancer: ['À relancer', 'warn'],
 };
 
+// Trois étapes : Signé (paiement à encaisser) → En production → Livré.
+// Les anciennes valeurs restent lisibles pour l'historique.
 export const DOSSIER_STATUS: L = {
-  signe: ['Signé', 'neutral'],
+  signe: ['Signé · à encaisser', 'warn'],
+  creation_en_cours: ['En production', 'accent'],
+  livre: ['Livré', 'ok'],
   paiement_confirme: ['Paiement confirmé', 'info'],
-  creation_en_cours: ['Création en cours', 'accent'],
   en_attente_validation: ['En attente de validation', 'warn'],
   modification_demandee: ['Modification demandée', 'danger'],
-  livre: ['Livré', 'ok'],
   publie: ['Publié', 'ok'],
 };
 
-export const DOSSIER_FLOW = ['signe', 'paiement_confirme', 'creation_en_cours', 'en_attente_validation', 'livre'];
+export const DOSSIER_FLOW = ['signe', 'creation_en_cours', 'livre'];
 
 export const TASK_STATUS: L = {
   a_faire: ['À faire', 'neutral'],
@@ -97,7 +99,7 @@ export const CART_STATUS: L = {
   recue: ['Reçue', 'warn'],
   contactee: ['Client contacté', 'info'],
   devis_envoye: ['Devis envoyé', 'info'],
-  confirmee: ['Confirmée', 'accent'],
+  confirmee: ['Signé · paiement attendu', 'accent'],
   en_production: ['En production', 'accent'],
   livree: ['Livrée', 'ok'],
   annulee: ['Annulée', 'neutral'],

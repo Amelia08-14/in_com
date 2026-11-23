@@ -1,0 +1,387 @@
+<title>Flux IN COM</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@600;700;800&family=Inter:wght@400;500;600&display=swap">
+<style>
+/* Layout : une frise de 5 phases (colonnes) lue de gauche à droite, puis les ruptures, puis le flux cible étape par étape. */
+:root {
+  --bg: #f5f6f9; --surface: #ffffff; --ink: #14213d; --muted: #5b6579; --line: #dfe3ec;
+  --accent: #2a63d6; --accent-soft: #e6eefc;
+  --warn: #b45309; --warn-soft: #fdf0dc; --bad: #c0352b; --bad-soft: #fbe5e3; --ok: #1a8a5a; --ok-soft: #e1f4ea;
+  --f-display: "Manrope", "Segoe UI", system-ui, sans-serif;
+  --f-body: "Inter", "Segoe UI", system-ui, sans-serif;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0f1420; --surface: #171e2d; --ink: #e8ecf5; --muted: #9aa4b8; --line: #2a3346;
+  --accent: #7aa5ff; --accent-soft: #1e2b49;
+  --warn: #f0b35a; --warn-soft: #3a2c14; --bad: #ff8a7e; --bad-soft: #3d1f1d; --ok: #5fd39c; --ok-soft: #15332a; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0f1420; --surface: #171e2d; --ink: #e8ecf5; --muted: #9aa4b8; --line: #2a3346;
+  --accent: #7aa5ff; --accent-soft: #1e2b49;
+  --warn: #f0b35a; --warn-soft: #3a2c14; --bad: #ff8a7e; --bad-soft: #3d1f1d; --ok: #5fd39c; --ok-soft: #15332a; color-scheme: dark }
+
+body { background: var(--bg); color: var(--ink); font: 15px/1.55 var(--f-body); }
+.wrap { max-width: 1240px; margin: 0 auto; padding-block: 40px 64px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid; gap: 48px; }
+h1, h2, h3 { font-family: var(--f-display); text-wrap: balance; margin: 0; }
+h1 { font-size: clamp(28px, 4vw, 40px); letter-spacing: -0.02em; }
+h2 { font-size: 24px; letter-spacing: -0.01em; }
+h3 { font-size: 15px; }
+p { margin: 0; }
+.lead { color: var(--muted); max-width: 70ch; margin-top: 10px; }
+.eyebrow { font: 700 12px var(--f-display); text-transform: uppercase; letter-spacing: .08em; color: var(--accent); }
+section { display: grid; gap: 18px; }
+.sec-head { display: grid; gap: 6px; }
+.sec-head p { color: var(--muted); max-width: 72ch; }
+
+/* Légende */
+.legend { display: flex; flex-wrap: wrap; gap: 8px 18px; font-size: 13px; color: var(--muted); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+
+/* Frise des phases */
+.flow-scroll { overflow-x: auto; padding-bottom: 6px; }
+.flow { display: grid; grid-template-columns: repeat(5, minmax(220px, 1fr)); gap: 14px; min-width: 1120px; }
+.phase { display: grid; gap: 10px; align-content: start; }
+.phase-head { display: flex; align-items: baseline; gap: 8px; padding: 0 2px 6px; border-bottom: 2px solid var(--ink); }
+.phase-head b { font: 800 13px var(--f-display); color: var(--accent); }
+.phase-head h3 { font-size: 16px; }
+.step { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 13px; display: grid; gap: 7px; }
+.step.broken { border-color: var(--bad); box-shadow: inset 3px 0 0 var(--bad); }
+.step.weak { border-color: var(--warn); box-shadow: inset 3px 0 0 var(--warn); }
+.step p { font-size: 13.5px; }
+.who { display: flex; flex-wrap: wrap; gap: 5px; }
+.role { font: 600 11.5px var(--f-body); background: var(--accent-soft); color: var(--accent); padding: 2px 8px; border-radius: 99px; }
+.role.client { background: var(--ok-soft); color: var(--ok); }
+.role.auto { background: transparent; color: var(--muted); border: 1px dashed var(--line); }
+.next { font-size: 12.5px; color: var(--muted); border-top: 1px dashed var(--line); padding-top: 7px; }
+.next b { color: var(--ink); font-weight: 600; }
+.flag { justify-self: start; font: 700 11.5px var(--f-body); padding: 1px 8px; border-radius: 99px; }
+.flag.bad { background: var(--bad-soft); color: var(--bad); }
+.flag.warn { background: var(--warn-soft); color: var(--warn); }
+.status-line { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; font-size: 11.5px; color: var(--muted); }
+.status-line i { font-style: normal; background: var(--bg); border: 1px solid var(--line); border-radius: 5px; padding: 0 6px; color: var(--ink); }
+
+/* Ruptures */
+.issues { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
+.issue { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; display: grid; gap: 6px; align-content: start; }
+.issue header { display: flex; gap: 10px; align-items: baseline; }
+.issue header b { font: 800 18px var(--f-display); color: var(--muted); font-variant-numeric: tabular-nums; min-width: 22px; }
+.issue p { font-size: 14px; color: var(--muted); }
+.issue .fix { color: var(--ink); font-size: 13.5px; }
+.issue .fix::before { content: "Correction : "; font-weight: 600; color: var(--ok); }
+
+/* Flux cible */
+.target { display: grid; gap: 10px; counter-reset: s; }
+.tstep { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px;
+  display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 4px 14px; }
+.tstep .num { grid-row: span 3; font: 800 26px/1 var(--f-display); color: var(--accent); font-variant-numeric: tabular-nums; }
+.tstep h3 { font-size: 17px; }
+.tcols { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-top: 6px; }
+.tcols div { display: grid; gap: 3px; align-content: start; }
+.tcols small { font: 700 11px var(--f-display); text-transform: uppercase; letter-spacing: .07em; color: var(--muted); }
+.tcols p { font-size: 13.5px; }
+
+.card-demo { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 18px; display: grid; gap: 12px; max-width: 560px; }
+.card-demo .box { border: 1px solid var(--accent); background: var(--accent-soft); border-radius: 10px; padding: 12px 14px; display: grid; gap: 6px; font-size: 14px; }
+.card-demo .box b { font-family: var(--f-display); }
+.btn { justify-self: start; background: var(--accent); color: #fff; font: 600 13.5px var(--f-body); padding: 7px 14px; border-radius: 8px; }
+:root[data-theme="dark"] .btn { color: #0f1420; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .btn { color: #0f1420; } }
+
+.changes { display: grid; gap: 8px; margin: 0; padding-left: 20px; }
+.changes li { padding-left: 4px; }
+.changes li b { font-weight: 600; }
+
+@media (max-width: 760px) {
+  .tcols { grid-template-columns: 1fr; }
+  .tstep { grid-template-columns: 32px minmax(0, 1fr); padding: 14px; }
+}
+</style>
+
+<div class="wrap">
+
+<header>
+  <div class="eyebrow">IN COM · CRM</div>
+  <h1 style="margin-top:8px">Du premier contact à la livraison</h1>
+  <p class="lead">Les flux tels qu’ils fonctionnent aujourd’hui dans le CRM (relevés dans le code), les endroits où ils cassent, et le flux simplifié proposé, où chaque personne sait ce qu’elle doit faire et ce qui revient vers elle.</p>
+</header>
+
+<section>
+  <div class="sec-head">
+    <div class="eyebrow">1 · Aujourd’hui</div>
+    <h2>Les flux existants</h2>
+    <p>Chaque carte est une étape : qui la fait, ce qu’elle déclenche, et qui prend la suite. Les cartes encadrées de rouge ou d’orange sont celles où le flux se perd.</p>
+  </div>
+  <div class="legend">
+    <span><span class="role">Équipe</span></span>
+    <span><span class="role client">Client</span></span>
+    <span><span class="role auto">Automatique</span></span>
+    <span><span class="flag bad">Rupture</span> le flux s’arrête ou se dédouble</span>
+    <span><span class="flag warn">Flou</span> on ne sait pas qui agit</span>
+  </div>
+
+  <div class="flow-scroll"><div class="flow">
+
+    <div class="phase">
+      <div class="phase-head"><b>A</b><h3>Arrivée du client</h3></div>
+      <div class="step weak">
+        <div class="who"><span class="role client">Visiteur</span></div>
+        <p>Remplit le <b>formulaire de contact</b> du site.</p>
+        <div class="next">Crée une fiche Univers (source Site) et une ligne dans <b>Demandes du site</b>. Personne n’est désigné pour rappeler.</div>
+        <span class="flag warn">Flou · 1</span>
+      </div>
+      <div class="step weak">
+        <div class="who"><span class="role client">Client</span></div>
+        <p><b>Crée son compte</b> (particulier ou entreprise) et complète son profil.</p>
+        <div class="next">Crée une fiche Univers liée au compte. Aucun commercial attribué.</div>
+        <span class="flag warn">Flou · 1</span>
+      </div>
+      <div class="step">
+        <div class="who"><span class="role client">Client</span><span class="role">Commercial</span></div>
+        <p>Envoie un <b>panier / demande de devis</b>, ou un commercial le saisit pour lui.</p>
+        <div class="next">Notifie sédentaires, responsable commercial et direction. <b>Le premier qui fait avancer le panier</b> en devient le conseiller.</div>
+      </div>
+      <div class="step">
+        <div class="who"><span class="role">Sédentaire</span><span class="role">Terrain</span></div>
+        <p><b>Prospection</b> : appel ou visite déclaré dans le Reporting (nouveau prospect ou fiche existante).</p>
+        <div class="next">Le motif choisi fait avancer la fiche : Prospect → Qualifié → Promesse, ou À éviter.</div>
+      </div>
+    </div>
+
+    <div class="phase">
+      <div class="phase-head"><b>B</b><h3>Vente</h3></div>
+      <div class="step">
+        <div class="who"><span class="role">Terrain</span><span class="role">Resp. commercial</span></div>
+        <p>Visite avec motif <b>Deal terrain</b> → le responsable commercial attribue le deal.</p>
+        <div class="next"><b>Le commercial attribué</b> programme le RDV (Calendrier), puis donne l’issue : gagné, perdu, à relancer, reprogrammer.</div>
+      </div>
+      <div class="step">
+        <div class="who"><span class="role">Sédentaire</span></div>
+        <p>Appel avec motif <b>Deal bureau</b> : deal attribué à lui-même, passage au bureau à programmer.</p>
+        <div class="next">Même suite : programmer puis donner l’issue.</div>
+      </div>
+      <div class="step broken">
+        <div class="who"><span class="role">Commercial</span></div>
+        <p>Fait avancer le panier : Reçue → Contacté → Devis envoyé → <b>Confirmée</b>.</p>
+        <div class="next">« Confirmée » ne crée <b>pas</b> de dossier. Il faut redéclarer un « Signé » dans le Reporting.</div>
+        <span class="flag bad">Rupture · 2</span>
+      </div>
+    </div>
+
+    <div class="phase">
+      <div class="phase-head"><b>C</b><h3>Signature &amp; paiement</h3></div>
+      <div class="step">
+        <div class="who"><span class="role">Commercial</span></div>
+        <p>Déclare <b>Signé</b> (Reporting) ou <b>Deal gagné</b>, avec les documents obligatoires.</p>
+        <div class="next">Crée le <b>dossier</b> (statut Signé), la fiche passe en Client. Le <b>responsable communication</b> et la direction reçoivent « paiement à vérifier ».</div>
+      </div>
+      <div class="step weak">
+        <div class="who"><span class="role">Resp. communication</span></div>
+        <p>Choisit la formule (obligatoire) et passe le paiement à <b>Payé</b>.</p>
+        <div class="status-line">Deux champs : <i>Statut du dossier</i> <i>Statut de paiement</i></div>
+        <div class="next">Déclenche le lancement automatique.</div>
+        <span class="flag warn">Flou · 6</span>
+      </div>
+      <div class="step">
+        <div class="who"><span class="role auto">Automatique</span></div>
+        <p><b>Lancement de la production</b> : chargé de clientèle, graphiste et community manager attribués (le moins chargé), tâches du jour générées selon les quotas de la formule.</p>
+        <div class="next">Le dossier passe en Création en cours. Chaque membre et le client sont notifiés.</div>
+      </div>
+      <div class="step">
+        <div class="who"><span class="role">Resp. technique</span><span class="role">Direction</span></div>
+        <p>Pose le <b>lien Drive</b> du client.</p>
+        <div class="next">Le client le voit dans son profil et y dépose ses références.</div>
+      </div>
+    </div>
+
+    <div class="phase">
+      <div class="phase-head"><b>D</b><h3>Production</h3></div>
+      <div class="step">
+        <div class="who"><span class="role">Graphiste</span></div>
+        <p>Ouvre sa tâche du jour, réalise, <b>envoie le lien</b> de la conception.</p>
+        <div class="next"><b>Le responsable technique</b> reçoit « conception à valider ».</div>
+      </div>
+      <div class="step">
+        <div class="who"><span class="role">Resp. technique</span></div>
+        <p><b>Validation technique</b> : valide ou demande une modification (avec note).</p>
+        <div class="next">Validé → <b>chargé de clientèle et client</b> notifiés. Refusé → retour au graphiste.</div>
+      </div>
+      <div class="step">
+        <div class="who"><span class="role client">Client</span><span class="role">Chargé de clientèle</span></div>
+        <p><b>Validation client</b> de la conception (dans « À valider »).</p>
+        <div class="next">Validé → graphiste félicité, <b>community manager</b> notifié. Modification → retour au graphiste.</div>
+      </div>
+      <div class="step broken">
+        <div class="who"><span class="role">Chargé de clientèle</span><span class="role client">Client</span></div>
+        <p>En parallèle, le dossier entier peut être <b>présenté au client</b> et validé une seconde fois (« Mes projets »).</p>
+        <div class="next">Deux circuits de validation pour le même travail.</div>
+        <span class="flag bad">Rupture · 3</span>
+      </div>
+    </div>
+
+    <div class="phase">
+      <div class="phase-head"><b>E</b><h3>Livraison &amp; suivi</h3></div>
+      <div class="step">
+        <div class="who"><span class="role">Community manager</span></div>
+        <p><b>Publie</b> le contenu validé.</p>
+        <div class="next">La tâche passe en Publiée.</div>
+      </div>
+      <div class="step broken">
+        <div class="who"><span class="role auto">Dossier</span></div>
+        <p>Le dossier reste en <b>Création en cours</b> même quand tout est validé et publié. « Livré » n’arrive que pour le développement.</p>
+        <span class="flag bad">Rupture · 4</span>
+      </div>
+      <div class="step broken">
+        <div class="who"><span class="role client">Client</span><span class="role">Commercial</span><span class="role">Recouvrement</span></div>
+        <p><b>Extra</b> commandé → validé par un commercial → encaissé par le recouvrement.</p>
+        <div class="next">Une fois payé, <b>rien n’est lancé</b> en production.</div>
+        <span class="flag bad">Rupture · 5</span>
+      </div>
+      <div class="step">
+        <div class="who"><span class="role client">Client</span><span class="role">Service concerné</span></div>
+        <p><b>SAV</b> : ticket → pris en charge → résolu.</p>
+        <div class="next">Le client est notifié de la résolution.</div>
+      </div>
+    </div>
+
+  </div></div>
+</section>
+
+<section>
+  <div class="sec-head">
+    <div class="eyebrow">2 · Diagnostic</div>
+    <h2>Où le flux se perd</h2>
+  </div>
+  <div class="issues">
+    <article class="issue">
+      <header><b>1</b><h3>Des demandes sans responsable</h3></header>
+      <p>Formulaire de contact et inscriptions créent une fiche, mais personne n’est chargé de rappeler. Elles peuvent rester sans réponse.</p>
+      <p class="fix">chaque nouvelle entrée est attribuée automatiquement à un commercial, avec « Rappeler sous 24 h ».</p>
+    </article>
+    <article class="issue">
+      <header><b>2</b><h3>Devis confirmé = double saisie</h3></header>
+      <p>Un panier confirmé ne crée pas de dossier, et ses statuts « En production » ou « Livrée » sont posés à la main : le client peut voir un statut faux.</p>
+      <p class="fix">« Client signé » depuis le devis crée le dossier, et le devis suit ensuite le dossier tout seul.</p>
+    </article>
+    <article class="issue">
+      <header><b>3</b><h3>Deux validations pour le même travail</h3></header>
+      <p>Validation par tâche (« À valider ») et validation du dossier entier (« Mes projets ») coexistent. Le client et le chargé de clientèle ne savent pas laquelle compte.</p>
+      <p class="fix">une seule validation : par conception. Le dossier montre la progression.</p>
+    </article>
+    <article class="issue">
+      <header><b>4</b><h3>Le dossier ne se ferme jamais</h3></header>
+      <p>Le statut du dossier ne suit pas les tâches. Pas de livraison automatique ni de fin de mois pour les abonnements.</p>
+      <p class="fix">le dossier passe en Livré quand le mois est produit, le client et le commercial sont notifiés.</p>
+    </article>
+    <article class="issue">
+      <header><b>5</b><h3>Extra payé, rien ne se passe</h3></header>
+      <p>Une commande d’extra s’arrête à « Payée » : aucune tâche n’est créée.</p>
+      <p class="fix">l’extra payé crée sa tâche et suit la même production.</p>
+    </article>
+    <article class="issue">
+      <header><b>6</b><h3>Deux champs pour le paiement</h3></header>
+      <p>« Paiement confirmé » (statut du dossier) et « Payé » (statut de paiement) disent la même chose.</p>
+      <p class="fix">un seul geste : « Confirmer le paiement ».</p>
+    </article>
+    <article class="issue">
+      <header><b>7</b><h3>On sait ce qui s’est passé, pas quoi faire</h3></header>
+      <p>Les notifications annoncent un événement, mais l’écran ne dit pas à la personne son action suivante ni ce qui reviendra vers elle.</p>
+      <p class="fix">un encadré « Prochaine étape » sur chaque fiche, dossier, deal et tâche.</p>
+    </article>
+    <article class="issue">
+      <header><b>8</b><h3>Supprimer un compte efface l’historique</h3></header>
+      <p>Supprimer un membre de l’équipe efface son reporting et retire son nom de ses clients et dossiers (cas de Yacine).</p>
+      <p class="fix">un compte de l’équipe est toujours désactivé, jamais supprimé.</p>
+    </article>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head">
+    <div class="eyebrow">3 · Proposition</div>
+    <h2>Le flux cible : sept étapes, un seul fil</h2>
+    <p>Le client avance d’une étape à la suivante, toujours avec une seule personne responsable. Chaque étape dit qui agit, ce que le CRM fait tout seul, et ce qui revient.</p>
+  </div>
+  <div class="target">
+    <div class="tstep"><span class="num">1</span><h3>Demande</h3>
+      <div class="tcols">
+        <div><small>Qui</small><p>Toute entrée : site, inscription, panier, appel, visite.</p></div>
+        <div><small>Le CRM fait</small><p>Crée ou retrouve la fiche, l’attribue au commercial (secteur pour le terrain, le moins chargé pour le reste).</p></div>
+        <div><small>Ce qui revient</small><p>Le commercial reçoit « Rappeler X sous 24 h ».</p></div>
+      </div></div>
+    <div class="tstep"><span class="num">2</span><h3>Qualification</h3>
+      <div class="tcols">
+        <div><small>Qui</small><p>Commercial sédentaire ou terrain.</p></div>
+        <div><small>Le CRM fait</small><p>Appels, visites et RDV (deals) font avancer la fiche : Qualifié, Promesse, À éviter.</p></div>
+        <div><small>Ce qui revient</small><p>Le responsable commercial voit les deals à attribuer et les relances en retard.</p></div>
+      </div></div>
+    <div class="tstep"><span class="num">3</span><h3>Signature</h3>
+      <div class="tcols">
+        <div><small>Qui</small><p>Commercial : un seul bouton « Client signé », depuis le reporting, le deal ou le devis.</p></div>
+        <div><small>Le CRM fait</small><p>Exige formule et documents, crée le dossier, confirme le devis.</p></div>
+        <div><small>Ce qui revient</small><p>Le recouvrement / resp. communication reçoit « Encaisser : X, formule Y, montant Z ».</p></div>
+      </div></div>
+    <div class="tstep"><span class="num">4</span><h3>Paiement</h3>
+      <div class="tcols">
+        <div><small>Qui</small><p>Recouvrement ou responsable communication : « Confirmer le paiement ».</p></div>
+        <div><small>Le CRM fait</small><p>Attribue l’équipe, génère les tâches selon la formule.</p></div>
+        <div><small>Ce qui revient</small><p>Le client : « production lancée ». Le resp. technique : « poser le lien Drive ». Le commercial : « paiement reçu ».</p></div>
+      </div></div>
+    <div class="tstep"><span class="num">5</span><h3>Production</h3>
+      <div class="tcols">
+        <div><small>Qui</small><p>Graphiste / photographe / développeur réalise et envoie le lien.</p></div>
+        <div><small>Le CRM fait</small><p>Transmet au responsable technique, puis au client (avec le chargé de clientèle).</p></div>
+        <div><small>Ce qui revient</small><p>Validé → community manager. Modification → retour au créateur avec la note.</p></div>
+      </div></div>
+    <div class="tstep"><span class="num">6</span><h3>Publication &amp; livraison</h3>
+      <div class="tcols">
+        <div><small>Qui</small><p>Community manager publie ; le développeur livre.</p></div>
+        <div><small>Le CRM fait</small><p>Quand tout le mois est validé et publié, le dossier passe en Livré.</p></div>
+        <div><small>Ce qui revient</small><p>Le client reçoit le récapitulatif du mois ; le commercial, le rappel de renouvellement.</p></div>
+      </div></div>
+    <div class="tstep"><span class="num">7</span><h3>Suivi</h3>
+      <div class="tcols">
+        <div><small>Qui</small><p>Client : extras et SAV depuis son espace.</p></div>
+        <div><small>Le CRM fait</small><p>Un extra payé reprend aux étapes 4 à 6 ; un ticket va au bon service.</p></div>
+        <div><small>Ce qui revient</small><p>Le client est notifié à chaque étape de son extra ou de son ticket.</p></div>
+      </div></div>
+  </div>
+</section>
+
+<section>
+  <div class="sec-head">
+    <div class="eyebrow">4 · À l’écran</div>
+    <h2>« Prochaine étape » sur chaque fiche</h2>
+    <p>Chaque dossier, deal, devis et tâche affiche le même encadré : ce que vous devez faire, et ce qui se passera ensuite.</p>
+  </div>
+  <div class="card-demo">
+    <div><div class="eyebrow">Dossier · Boulangerie El Nour</div><h3 style="font-size:17px;margin-top:4px">Formule Essentiel · Signé par Yacine</h3></div>
+    <div class="box">
+      <b>Prochaine étape : confirmer le paiement</b>
+      <p>Vous : vérifiez le versement de 45 000 DA et confirmez.</p>
+      <p>Ensuite : le chargé de clientèle, le graphiste et le community manager sont attribués, les tâches du mois sont créées. Le client et Yacine sont prévenus.</p>
+    </div>
+    <span class="btn">Confirmer le paiement</span>
+  </div>
+  <p style="color:var(--muted);font-size:13px">Exemple fictif.</p>
+</section>
+
+<section>
+  <div class="sec-head">
+    <div class="eyebrow">5 · À valider</div>
+    <h2>Ce qui change dans le CRM</h2>
+  </div>
+  <ol class="changes">
+    <li><b>Attribution automatique</b> de chaque nouvelle demande (site, inscription, panier) à un commercial.</li>
+    <li><b>Un seul bouton « Client signé »</b> depuis le reporting, le deal ou le devis ; le devis suit le dossier tout seul.</li>
+    <li><b>Un seul geste « Confirmer le paiement »</b> à la place des deux statuts.</li>
+    <li><b>Une seule validation</b>, par conception ; suppression de la validation du dossier entier.</li>
+    <li><b>Livraison automatique</b> du dossier quand le mois est produit, avec notification du client et du commercial.</li>
+    <li><b>Extras payés</b> qui créent leur tâche de production.</li>
+    <li><b>Encadré « Prochaine étape »</b> sur les dossiers, deals, devis et tâches, et notifications qui disent quoi faire.</li>
+    <li><b>Comptes de l’équipe désactivés</b>, jamais supprimés.</li>
+  </ol>
+</section>
+
+</div>

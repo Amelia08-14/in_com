@@ -5,6 +5,7 @@ import { Badge, Modal, PageHead, Tabs, useAction, useData, useToast, Empty } fro
 import { api, fmtDA, fmtDate } from '@/lib/api';
 import { useMe } from '@/lib/me';
 import { DOSSIER_FLOW, DOSSIER_STATUS, PAYMENT_STATUS, ROLE_LABELS, SERVICE_TYPE, TASK_STATUS } from '@/lib/labels';
+import NextStep, { type Step } from '@/components/NextStep';
 
 const PROD_ROLES = ['graphiste', 'community_manager', 'photographe', 'developpeur', 'media_buyer'];
 
@@ -122,14 +123,14 @@ function EditDossier({ d, onDone }: { d: any; onDone: () => void }) {
   const toast = useToast();
   const { data: offers } = useData<any[]>('/offers');
   const isCustom = !!d.offer?.custom_dossier_id;
-  const [f, setF] = useState<any>({ offer_id: isCustom ? 'custom' : (d.offer_id || ''), amount: d.amount || 0, payment_status: d.payment_status, payment_mode: d.payment_mode || 'bureau', service_type: d.service_type, status: d.status, note: '' });
+  const [f, setF] = useState<any>({ offer_id: isCustom ? 'custom' : (d.offer_id || ''), amount: d.amount || 0, payment_mode: d.payment_mode || 'bureau', service_type: d.service_type, status: d.status, note: '' });
   const [custom, setCustom] = useState<any>({
     posts_month: isCustom ? d.offer.posts_month : 0, stories_month: isCustom ? d.offer.stories_month : 0, reels_month: isCustom ? d.offer.reels_month : 0,
     price_month: isCustom ? d.offer.price_month : 0,
     items: (d.items || []).map((i: any) => ({ service_id: i.service_id ? String(i.service_id) : '', label: i.label, quantity: i.quantity, unit_price: i.unit_price })),
   });
   const set = (k: string) => (e: any) => setF({ ...f, [k]: e.target.value });
-  const flow = ['signe', 'paiement_confirme', 'creation_en_cours', 'en_attente_validation', 'modification_demandee', 'livre', 'publie'];
+  const flow = DOSSIER_FLOW.includes(d.status) ? DOSSIER_FLOW : [...DOSSIER_FLOW, d.status];
   return (
     <div className="card">
       <h2>Modifier le dossier</h2>
@@ -145,9 +146,6 @@ function EditDossier({ d, onDone }: { d: any; onDone: () => void }) {
           </select>
         </label>
         <label className="field"><span>Montant (DA)</span><input className="input" type="number" value={f.amount} onChange={set('amount')} /></label>
-        <label className="field"><span>Paiement</span>
-          <select className="select" value={f.payment_status} onChange={set('payment_status')}>{Object.entries(PAYMENT_STATUS).map(([k, [l]]) => <option key={k} value={k}>{l}</option>)}</select>
-        </label>
         <label className="field"><span>Mode de paiement</span>
           <select className="select" value={f.payment_mode} onChange={set('payment_mode')}><option value="bureau">Au bureau</option><option value="terrain">Sur le terrain</option><option value="virement">Virement</option></select>
         </label>
@@ -234,16 +232,71 @@ function DossierTasks({ d, canCreate, onDone }: { d: any; canCreate: boolean; on
   );
 }
 
-function Flow({ status, service }: { status: string; service: string }) {
-  const flow = [...DOSSIER_FLOW.slice(0, 4), service === 'developpement' ? 'livre' : 'publie'];
-  const idx = status === 'modification_demandee' ? 3 : flow.indexOf(status);
+function Flow({ status }: { status: string }) {
+  const idx = Math.max(0, DOSSIER_FLOW.indexOf(status));
+  const labels: Record<string, string> = { signe: 'Signé · paiement', creation_en_cours: 'En production', livre: 'Livré' };
   return (
     <div className="pipeline">
-      {flow.map((s, i) => (
-        <span key={s} className={i < idx ? 'done' : i === idx ? 'cur' : ''}>
-          {i === 3 && status === 'modification_demandee' ? 'Modification demandée' : DOSSIER_STATUS[s][0]}
-        </span>
+      {DOSSIER_FLOW.map((s, i) => (
+        <span key={s} className={i < idx || status === 'livre' ? 'done' : i === idx ? 'cur' : ''}>{labels[s]}</span>
       ))}
+    </div>
+  );
+}
+
+// Avancement de la production : du mois (abonnement) ou du projet
+function progressText(p: any) {
+  if (!p) return '';
+  const total = Math.max(Number(p.quota) || 0, Number(p.total) || 0);
+  if (!total) return p.monthly ? 'Les tâches du mois arrivent chaque jour ouvré.' : 'Aucune tâche pour l’instant.';
+  return [`${p.monthly ? 'Ce mois' : 'Projet'} : ${p.done || 0} / ${total} validé${(p.done || 0) > 1 ? 's' : ''}`,
+    Number(p.in_review) > 0 && `${p.in_review} en validation`, Number(p.todo) > 0 && `${p.todo} à produire`].filter(Boolean).join(' · ');
+}
+
+const PROD = ['graphiste', 'photographe', 'developpeur', 'media_buyer', 'community_manager'];
+// Prochaine étape du dossier, dite à la personne qui le regarde
+function dossierStep(d: any, me: any): Step {
+  const role = me.role;
+  const canPay = ['responsable_communication', 'admin', 'recouvrement'].includes(role);
+  const isResp = ['responsable_communication', 'admin'].includes(role);
+  const signer = d.signed_by_name || 'le commercial';
+  if (d.status === 'signe') {
+    if (role === 'client') return { tone: 'wait', title: 'Paiement attendu', you: 'Dès réception de votre paiement, votre équipe IN COM est attribuée et la production démarre.' };
+    if (!d.offer_id) return isResp
+      ? { title: 'Définir l’offre du client', you: 'Choisissez la formule dans « Modifier le dossier » : formule du site ou offre personnalisée.', then: 'le recouvrement pourra confirmer le paiement.' }
+      : { tone: 'wait', title: 'Offre à définir', you: 'Le responsable communication définit l’offre personnalisée, puis le paiement est encaissé.' };
+    if (canPay) return { title: 'Confirmer le paiement', you: `Vérifiez le versement de ${fmtDA(d.amount)} et confirmez.`, then: `le chargé de clientèle et l’équipe de production sont attribués, les tâches sont créées. Le client et ${signer} sont prévenus.` };
+    return { tone: 'wait', title: 'Paiement attendu', you: 'Le recouvrement encaisse et confirme le paiement.', then: 'la production démarre toute seule et vous êtes prévenu.' };
+  }
+  if (d.status === 'livre') {
+    const monthly = d.service_type === 'abonnement';
+    return { tone: 'done', title: monthly ? 'Mois livré' : 'Projet livré',
+      you: d.signed_by === me.id ? 'Appelez le client pour son avis et proposez la suite (extra, renouvellement).'
+        : monthly ? 'La production du mois est terminée. Le dossier repasse en production avec les tâches du mois suivant.' : 'Toutes les tâches sont validées.' };
+  }
+  const progress = progressText(d.progress);
+  if (role === 'client') return { tone: 'wait', title: 'Production en cours', you: progress, then: 'validez chaque contenu dans « À valider ». Le projet passe « Livré » quand tout est produit.' };
+  if (role === 'charge_clientele') return { title: 'Faire valider le client', you: `${progress}. Relancez le client si un contenu attend depuis plus de 48 h.`, then: 'chaque contenu validé part au community manager.' };
+  if (PROD.includes(role)) return { title: 'Produire', you: `${progress}. Vos tâches sont dans « Mes tâches ».`, then: 'chaque envoi passe en validation technique, puis chez le client.' };
+  return { tone: 'wait', title: 'En production', you: progress, then: 'le dossier passe « Livré » tout seul quand tout est validé et publié ; le client et le commercial sont prévenus.' };
+}
+
+// Paiement : un seul geste, par le recouvrement ou le responsable communication
+function PaymentCard({ d, onDone }: { d: any; onDone: () => void }) {
+  const toast = useToast();
+  const [amount, setAmount] = useState(d.amount || 0);
+  const [mode, setMode] = useState(d.payment_mode || 'bureau');
+  return (
+    <div className="card">
+      <div className="grid-2">
+        <label className="field"><span>Montant encaissé (DA)</span><input className="input" type="number" min={0} value={amount} onChange={(e) => setAmount(e.target.value)} /></label>
+        <label className="field"><span>Mode de paiement</span>
+          <select className="select" value={mode} onChange={(e) => setMode(e.target.value)}><option value="bureau">Au bureau</option><option value="terrain">Sur le terrain</option><option value="virement">Virement</option></select>
+        </label>
+      </div>
+      <button className="btn btn-primary" style={{ marginTop: 12 }} disabled={!d.offer_id} onClick={async () => {
+        try { const r = await api(`/dossiers/${d.id}/confirm-payment`, { body: { amount, payment_mode: mode } }); toast(`Paiement confirmé · ${launchText(r.launch)}`); onDone(); } catch (e: any) { toast(e.message, true); }
+      }}>Confirmer le paiement</button>
     </div>
   );
 }
@@ -293,16 +346,13 @@ function TeamForm({ d, staff, onDone }: { d: any; staff: any[]; onDone: () => vo
 function DossierModal({ id, onClose, onDone }: { id: number; onClose: () => void; onDone: () => void }) {
   const me = useMe();
   const run = useAction();
-  const toast = useToast();
   const { data: d, reload } = useData<any>(`/dossiers/${id}`);
   const isResp = ['responsable_communication', 'admin'].includes(me.role);
   const { data: staff } = useData<any[]>(isResp ? '/users?role=charge_clientele,graphiste,community_manager,photographe,developpeur,media_buyer' : null);
-  const [note, setNote] = useState('');
   const done = () => { reload(); onDone(); };
-  const act = (path: string, body: any, msg: string) => run(() => api(`/dossiers/${id}/${path}`, { body }), msg, done);
 
   if (!d) return <Modal title="Dossier" onClose={onClose}><p>Chargement…</p></Modal>;
-  const awaitingClient = d.status === 'en_attente_validation' && !d.validated_at;
+  const canPay = ['responsable_communication', 'admin', 'recouvrement'].includes(me.role) && d.status === 'signe' && d.offer_id;
   const canTask = ['admin', 'responsable_communication', 'responsable_technique'].includes(me.role);
   // Le lien Drive est renseigné par la direction ou le responsable technique uniquement
   const canDrive = ['admin', 'responsable_technique'].includes(me.role);
@@ -313,7 +363,9 @@ function DossierModal({ id, onClose, onDone }: { id: number; onClose: () => void
 
   return (
     <Modal title={d.title} onClose={onClose} wide>
-      <Flow status={d.status} service={d.service_type} />
+      <Flow status={d.status} />
+      <NextStep step={dossierStep(d, me)} />
+      {canPay && <PaymentCard d={d} onDone={done} key={d.amount} />}
       <dl className="kv">
         <dt>Client</dt><dd>{d.client_name}</dd>
         <dt>Prestation</dt><dd>{SERVICE_TYPE[d.service_type]}</dd>
@@ -325,44 +377,15 @@ function DossierModal({ id, onClose, onDone }: { id: number; onClose: () => void
         <dt>Montant</dt><dd>{fmtDA(d.amount)} · paiement {d.payment_mode} · <Badge map={PAYMENT_STATUS} value={d.payment_status || 'en_attente'} /></dd>
         <dt>Paiement confirmé</dt><dd>{fmtDate(d.payment_confirmed_at, true)}</dd>
         <dt>Équipe</dt><dd>{d.team.length ? d.team.map((t: any) => `${t.name} (${ROLE_LABELS[t.role] || t.role})`).join(', ') : '—'}</dd>
-        {d.validated_at && <><dt>Validé par le client</dt><dd>{fmtDate(d.validated_at, true)}</dd></>}
+        {d.status !== 'signe' && <><dt>Avancement</dt><dd>{progressText(d.progress)}</dd></>}
+        {d.carts?.length > 0 && <><dt>Devis</dt><dd>{d.carts.map((c: any) => c.code).join(', ')} · suit ce dossier</dd></>}
       </dl>
       {d.client && <ClientCard c={d.client} />}
       {d.client && <DriveCard d={d} canEdit={canDrive} onDone={done} key={d.client.drive_url || 'none'} />}
       {isResp && <EditDossier d={d} onDone={done} key={`${d.status}-${d.payment_status}-${d.offer_id}`} />}
 
-      {isResp && d.status === 'signe' && (
-        <div className="card" style={{ background: 'var(--warn-soft)', borderColor: 'transparent' }}>
-          <h2>Vérifier le paiement</h2>
-          <p style={{ margin: '0 0 12px', fontSize: 14 }}>Dès que le paiement est confirmé, le CRM attribue l’équipe (chargé de clientèle, graphiste, community manager… selon la prestation, au moins chargé d’abord) et répartit les tâches selon la formule.</p>
-          {!d.offer_id && <p style={{ margin: '0 0 12px', fontSize: 14, color: 'var(--danger)' }}>Choisissez d’abord la formule (du site ou personnalisée) dans « Modifier le dossier » ci-dessus.</p>}
-          <button className="btn btn-dark" disabled={!d.offer_id} onClick={async () => {
-            try { const r = await api(`/dossiers/${id}/confirm-payment`, { body: {} }); toast(`Paiement confirmé · ${launchText(r.launch)}`); done(); } catch (e: any) { toast(e.message, true); }
-          }}>Confirmer le paiement et lancer la production</button>
-        </div>
-      )}
-
       {isResp && d.status !== 'signe' && (
         <TeamForm d={d} staff={staff || []} onDone={done} key={`${d.cc_id}-${d.team.map((t: any) => `${t.role}:${t.id}`).join(',')}`} />
-      )}
-
-      {['charge_clientele', 'responsable_communication', 'admin'].includes(me.role) && ['creation_en_cours', 'modification_demandee'].includes(d.status) && (
-        <button className="btn btn-dark" style={{ justifySelf: 'start' }} onClick={() => act('submit', {}, 'Présenté au client')}>Présenter au client pour validation</button>
-      )}
-
-      {['charge_clientele', 'client', 'admin'].includes(me.role) && awaitingClient && (
-        <div className="card">
-          <h2>Décision du client</h2>
-          <label className="field"><span>Note (obligatoire pour une modification)</span><textarea className="textarea" value={note} onChange={(e) => setNote(e.target.value)} /></label>
-          <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
-            <button className="btn btn-ok" onClick={() => act('decision', { decision: 'valider', note }, 'Validé')}>Valider</button>
-            <button className="btn btn-danger" disabled={!note} onClick={() => act('decision', { decision: 'modifier', note }, 'Modification demandée')}>Demander une modification</button>
-          </div>
-        </div>
-      )}
-
-      {['community_manager', 'responsable_communication', 'admin'].includes(me.role) && d.validated_at && d.status !== 'publie' && d.service_type !== 'developpement' && (
-        <button className="btn btn-primary" style={{ justifySelf: 'start' }} onClick={() => act('publish', {}, 'Publié')}>Marquer comme publié</button>
       )}
 
       {me.role !== 'client' && <DossierTasks d={d} canCreate={canTask} onDone={done} />}
@@ -371,7 +394,7 @@ function DossierModal({ id, onClose, onDone }: { id: number; onClose: () => void
         <h4 style={{ fontSize: 15, marginBottom: 10 }}>Historique</h4>
         <div className="timeline">
           {d.history.map((h: any) => (
-            <div key={h.id}><div><b>{DOSSIER_STATUS[h.status]?.[0] || (h.status === 'valide' ? 'Validé par le client' : h.status)}</b> — {h.user_name || 'CRM'}<small>{fmtDate(h.created_at, true)}{h.note ? ` · ${h.note}` : ''}</small></div></div>
+            <div key={h.id}><div><b>{{ signe: 'Signé', creation_en_cours: 'En production' }[h.status as string] || DOSSIER_STATUS[h.status]?.[0] || (h.status === 'valide' ? 'Validé par le client' : h.status)}</b> — {h.user_name || 'CRM'}<small>{fmtDate(h.created_at, true)}{h.note ? ` · ${h.note}` : ''}</small></div></div>
           ))}
         </div>
       </div>
@@ -386,20 +409,19 @@ export default function Dossiers() {
   const [tab, setTab] = useState('tous');
   const [open, setOpen] = useState<number | null>(null);
   useEffect(() => { const s = new URLSearchParams(window.location.search).get('status'); if (s) setTab(s); }, []);
-  const list = (rows || []).filter((d) => tab === 'tous' || (tab === 'a_publier' ? d.validated_at && d.status !== 'publie' : d.status === tab));
+  const list = (rows || []).filter((d) => tab === 'tous' || d.status === tab);
   const n = (s: string) => (rows || []).filter((d) => d.status === s).length;
 
   return (
     <>
       <PageHead
         title={me.role === 'client' ? 'Mes projets' : 'Dossiers clients'}
-        sub={me.role === 'client' ? 'Suivez chaque prestation, de la signature à la publication.' : 'Signé → Payé (équipe et tâches attribuées automatiquement selon la formule) → Création → Présenté au client → Validé → Publié ou livré. La direction et le responsable communication peuvent corriger une étape à tout moment.'}
+        sub={me.role === 'client' ? 'Suivez chaque prestation, de la signature à la livraison. Vous validez chaque contenu dans « À valider ».'
+          : 'Signé → paiement confirmé (équipe et tâches attribuées toutes seules) → En production (validation conception par conception) → Livré dès que le mois ou le projet est produit.'}
       />
       {me.role !== 'client' && (
         <Tabs value={tab} onChange={setTab} items={[
-          ['tous', 'Tous'], ['signe', 'Signés', n('signe')], ['paiement_confirme', 'Paiement confirmé', n('paiement_confirme')],
-          ['creation_en_cours', 'En création'], ['en_attente_validation', 'En validation', n('en_attente_validation')],
-          ['modification_demandee', 'Modifications', n('modification_demandee')], ['a_publier', 'À publier'], ['publie', 'Publiés'], ['livre', 'Livrés'],
+          ['tous', 'Tous'], ['signe', 'À encaisser', n('signe')], ['creation_en_cours', 'En production', n('creation_en_cours')], ['livre', 'Livrés', n('livre')],
         ]} />
       )}
       {list.length === 0 ? <Empty>Aucun dossier.</Empty> : (
@@ -410,7 +432,7 @@ export default function Dossiers() {
               {list.map((d) => (
                 <tr key={d.id} className="click" onClick={() => setOpen(d.id)}>
                   <td><b>{d.client_name}</b><span className="sub">{SERVICE_TYPE[d.service_type]}</span></td>
-                  <td><Badge map={DOSSIER_STATUS} value={d.status} />{d.validated_at && d.status === 'en_attente_validation' && <span className="badge ok" style={{ marginLeft: 6 }}>Validé · à publier</span>}</td>
+                  <td><Badge map={DOSSIER_STATUS} value={d.status} /></td>
                   <td>{d.offer || '—'}<span className="sub">{fmtDA(d.amount)}</span></td>
                   <td><Badge map={PAYMENT_STATUS} value={d.payment_status || 'en_attente'} /></td>
                   <td>{d.signed_by_name || '—'}</td>

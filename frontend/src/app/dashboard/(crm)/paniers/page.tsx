@@ -5,6 +5,8 @@ import { Badge, Empty, Modal, PageHead, Tabs, useAction, useData } from '@/compo
 import { api, API_URL, fmtDA, fmtDate } from '@/lib/api';
 import { useMe } from '@/lib/me';
 import { CART_STATUS } from '@/lib/labels';
+import NextStep, { type Step } from '@/components/NextStep';
+import SignFields, { EMPTY_SIGN, signReady, type Sign } from '@/components/SignFields';
 
 type Line = { kind: 'offer' | 'service' | 'devis'; ref: string; label: string; months?: number; quantity: number; price: number };
 
@@ -113,21 +115,43 @@ function NewQuote({ onClose, onDone }: { onClose: () => void; onDone: () => void
   );
 }
 
-// Étape suivante proposée au commercial pour chaque statut
+// Étapes posées à la main avant la signature. Ensuite le devis suit son dossier :
+// « Client signé » → paiement confirmé (en production) → livré, sans action sur le panier.
 const NEXT: Record<string, string[]> = {
   recue: ['contactee', 'annulee'],
-  contactee: ['devis_envoye', 'confirmee', 'annulee'],
-  devis_envoye: ['confirmee', 'annulee'],
-  confirmee: ['en_production', 'annulee'],
-  en_production: ['livree'],
+  contactee: ['devis_envoye', 'annulee'],
+  devis_envoye: ['annulee'],
 };
+
+function cartStep(c: any): Step {
+  const who = c.company || c.name;
+  switch (c.status) {
+    case 'recue': return { title: 'Appeler le client', you: `Appelez ${who}${c.phone ? ` au ${c.phone}` : ''} sous 24 h, puis passez à « Client contacté ».`, then: 'le client voit l’étape sur sa page de suivi.' };
+    case 'contactee': return { title: 'Envoyer le devis', you: 'Envoyez le devis au client, puis passez à « Devis envoyé ». S’il accepte tout de suite, cliquez « Client signé ».', then: 'le client est prévenu que son devis est prêt.' };
+    case 'devis_envoye': return { title: 'Obtenir la signature', you: 'Relancez le client. Quand il accepte, cliquez « Client signé » avec la formule et les documents.', then: 'le dossier est créé et le recouvrement reçoit « Encaisser ».' };
+    case 'confirmee': return { tone: 'wait', title: 'Paiement attendu', you: 'Le recouvrement encaisse et confirme le paiement dans le dossier. Rien à faire sur ce devis.', then: 'l’équipe est attribuée, la production démarre et ce devis passe « En production » tout seul.' };
+    case 'en_production': return { tone: 'wait', title: 'En production', you: 'L’équipe produit ; le client valide chaque contenu.', then: 'quand tout est produit, le devis passe « Livrée » et vous êtes prévenu.' };
+    case 'livree': return { tone: 'done', title: 'Livré', you: 'Appelez le client pour son avis et proposez la suite (extra, renouvellement).' };
+    default: return { tone: 'done', title: 'Devis clôturé' };
+  }
+}
 
 function CartModal({ id, onClose, onDone }: { id: number; onClose: () => void; onDone: () => void }) {
   const run = useAction();
   const { data: c, reload } = useData<any>(`/carts/${id}`);
+  const { data: offers } = useData<any[]>('/offers');
   const [note, setNote] = useState('');
+  const [signing, setSigning] = useState(false);
+  const [sign, setSign] = useState<Sign>(EMPTY_SIGN);
   const move = (status: string) =>
     run(() => api(`/carts/${id}/status`, { body: { status, note } }), `Statut : ${CART_STATUS[status][0]}`, () => { setNote(''); reload(); onDone(); });
+  const startSign = () => {
+    // La formule du panier est proposée d'office
+    const code = c?.items.find((i: any) => i.kind === 'offer')?.ref;
+    const o = offers?.find((x) => x.code === code);
+    setSign({ ...EMPTY_SIGN, offer_id: o ? String(o.id) : '' });
+    setSigning(true);
+  };
   return (
     <Modal wide title={c ? `Panier ${c.code}` : 'Panier'} onClose={onClose}>
       {c && (
@@ -168,7 +192,20 @@ function CartModal({ id, onClose, onDone }: { id: number; onClose: () => void; o
               ))}
             </ol>
           </div>
-          {NEXT[c.status] && (
+          <NextStep step={cartStep(c)}>
+            {['recue', 'contactee', 'devis_envoye'].includes(c.status) && !signing && <button className="btn btn-ok btn-sm" onClick={startSign}>Client signé</button>}
+          </NextStep>
+          {signing && (
+            <div style={{ display: 'grid', gap: 10 }}>
+              <SignFields value={sign} onChange={setSign} />
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button className="btn btn-ghost" onClick={() => setSigning(false)}>Annuler</button>
+                <button className="btn btn-primary" disabled={!signReady(sign)} onClick={() => run(() => api(`/carts/${id}/sign`, { body: sign }),
+                  'Client signé : dossier créé, le recouvrement encaisse', () => { setSigning(false); reload(); onDone(); })}>Enregistrer la signature</button>
+              </div>
+            </div>
+          )}
+          {NEXT[c.status] && !signing && (
             <div style={{ display: 'grid', gap: 10 }}>
               <label className="field"><span>Note pour le client (facultative)</span>
                 <input className="input" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Ex. : devis envoyé par e-mail, rendez-vous fixé mardi à 10 h" />

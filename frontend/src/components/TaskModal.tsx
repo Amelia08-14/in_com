@@ -5,12 +5,37 @@ import { Badge, Modal, useAction, useData } from '@/components/ui';
 import { api, fmtDate } from '@/lib/api';
 import { useMe } from '@/lib/me';
 import { TASK_STATUS } from '@/lib/labels';
+import NextStep, { type Step } from '@/components/NextStep';
 
 const ACTION_LABEL: Record<string, string> = {
   generation: 'Tâche générée par le CRM', ouverture: 'Ouverte', creation: 'Conception ajoutée', modification: 'Modification terminée',
   validation_technique: 'Validée en interne', refus_technique: 'Refusée par le responsable technique', refus_cc: 'Modification demandée par le CC',
   refus_client: 'Modification demandée par le client', validation_client: 'Validée', publication: 'Publiée', reattribution: 'Réattribuée', creation_manuelle: 'Créée',
 };
+
+// Prochaine étape de la tâche, dite à la personne qui l'ouvre
+function taskStep(t: any, me: any): Step {
+  const mine = t.assigned_to === me.id;
+  const by = t.assigned_name || 'le créateur';
+  switch (t.status) {
+    case 'a_faire': case 'en_cours':
+      return mine ? { title: 'Réaliser et envoyer', you: 'Réalisez le contenu, puis collez le lien du fichier et cliquez « Ajouter ».', then: 'le responsable technique valide ou demande une modification.' }
+        : { tone: 'wait', title: 'En réalisation', you: `${by} réalise ce contenu.` };
+    case 'modification_demandee':
+      return mine ? { title: 'Corriger', you: `Corrigez selon la note${t.last_note ? ` : « ${t.last_note} »` : ''}, puis déposez la nouvelle version.`, then: 'elle repart en validation technique.' }
+        : { tone: 'wait', title: 'Modification en cours', you: `${by} corrige le contenu.` };
+    case 'validation_technique':
+      return me.role === 'responsable_technique' && !mine ? { title: 'Valider en interne', you: 'Ouvrez la version, puis validez ou demandez une modification avec une note précise.', then: 'validé, le contenu part chez le client ; refusé, il revient au créateur.' }
+        : { tone: 'wait', title: 'En validation technique', you: 'Le responsable technique vérifie le contenu.' };
+    case 'validation_client':
+      return ['client', 'charge_clientele'].includes(me.role) ? { title: me.role === 'client' ? 'Votre avis' : 'Faire valider le client', you: me.role === 'client' ? 'Ouvrez la version, puis validez ou demandez une modification.' : 'Présentez la version au client et enregistrez sa décision. Relancez-le après 48 h.', then: 'validé, le contenu part en publication ; sinon, il revient au créateur avec la note.' }
+        : { tone: 'wait', title: 'Chez le client', you: 'Le client (ou son chargé de clientèle) valide ou demande une modification.' };
+    case 'validee':
+      return me.role === 'community_manager' ? { title: 'Publier', you: 'Programmez ou publiez le contenu, puis cliquez « Marquer comme publiée ».', then: 'quand tout le mois est validé et publié, le dossier passe « Livré ».' }
+        : { tone: 'done', title: 'Validée par le client', you: t.type === 'dev' ? 'Livraison faite.' : 'Le community manager la publie.' };
+    default: return { tone: 'done', title: 'Publiée' };
+  }
+}
 
 export default function TaskModal({ id, onClose, onDone }: { id: number; onClose: () => void; onDone: () => void }) {
   const me = useMe();
@@ -43,6 +68,7 @@ export default function TaskModal({ id, onClose, onDone }: { id: number; onClose
         {t.modif_count > 0 && <span className="badge danger">{t.modif_count} modif.</span>}
         <span style={{ color: 'var(--muted)', fontSize: 13 }}>Deadline {fmtDate(t.due_date)}</span>
       </div>
+      <NextStep step={taskStep(t, me)} />
       <dl className="kv">
         <dt>Client</dt><dd>{t.client?.name} · formule {t.client?.offer || '—'}</dd>
         <dt>Brief</dt><dd>{t.brief || '—'}</dd>

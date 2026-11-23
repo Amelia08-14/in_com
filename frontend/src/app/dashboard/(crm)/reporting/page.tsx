@@ -5,6 +5,7 @@ import { Badge, Modal, PageHead, useData, useToast, Empty } from '@/components/u
 import { api, qs, fmtDate } from '@/lib/api';
 import { useMe } from '@/lib/me';
 import { DEAL_STATUS, PROSPECT_LABEL, REASON_LABEL } from '@/lib/labels';
+import SignFields, { EMPTY_SIGN, signReady, type Sign } from '@/components/SignFields';
 
 const REASONS: Record<string, string[]> = {
   commercial_sedentaire: ['prospect', 'relance_sedentaire', 'relance_terrain', 'relance_visite', 'deal_terrain', 'deal_bureau', 'signe'],
@@ -22,7 +23,7 @@ const RULES: Record<string, string> = {
   deal_bureau: 'Ajouté à Deals et attribué automatiquement à vous : à programmer.',
   promesse: 'La fiche passe en Promesse de signature.',
   a_eviter: 'La fiche passe en À éviter.',
-  signe: 'Documents obligatoires (contrat, registre de commerce, agrément). Le dossier part chez le responsable communication.',
+  signe: 'Client signé : formule et documents obligatoires. Le dossier est créé et part au recouvrement pour encaisser.',
 };
 
 function ReportForm({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
@@ -35,7 +36,7 @@ function ReportForm({ onClose, onDone }: { onClose: () => void; onDone: () => vo
   const [np, setNp] = useState<any>({ sector_id: '', source: 'sedentaire' });
   const [reason, setReason] = useState('');
   const [notes, setNotes] = useState('');
-  const [docs, setDocs] = useState('');
+  const [sign, setSign] = useState<Sign>(EMPTY_SIGN);
   const [effects, setEffects] = useState<string[] | null>(null);
   const { data: sectors } = useData<any[]>('/sectors');
   // Le responsable commercial (et la direction) déclare un appel ou une visite, comme les deux équipes
@@ -52,7 +53,7 @@ function ReportForm({ onClose, onDone }: { onClose: () => void; onDone: () => vo
 
   async function submit() {
     try {
-      const body: any = { reason, notes, documents_url: docs || undefined, channel: mode };
+      const body: any = { reason, notes, channel: mode, ...(reason === 'signe' ? sign : {}) };
       if (picked) body.prospect_id = picked.id;
       else body.prospect = { ...np, name };
       const r = await api('/reports', { body });
@@ -61,7 +62,7 @@ function ReportForm({ onClose, onDone }: { onClose: () => void; onDone: () => vo
     } catch (e: any) { toast(e.message, true); }
   }
 
-  const canSubmit = reason && (picked || (isNew && name));
+  const canSubmit = reason && (picked || (isNew && name)) && (reason !== 'signe' || signReady(sign));
 
   return (
     <Modal
@@ -139,9 +140,7 @@ function ReportForm({ onClose, onDone }: { onClose: () => void; onDone: () => vo
             </select>
           </label>
           {reason && <div className="notice">{RULES[reason]}</div>}
-          {reason === 'signe' && (
-            <label className="field"><span>Lien Drive ou photos des documents *</span><input className="input" value={docs} onChange={(e) => setDocs(e.target.value)} placeholder="https://drive.google.com/…" /></label>
-          )}
+          {reason === 'signe' && <SignFields value={sign} onChange={setSign} />}
           <label className="field"><span>Notes</span><textarea className="textarea" value={notes} onChange={(e) => setNotes(e.target.value)} /></label>
         </>
       )}

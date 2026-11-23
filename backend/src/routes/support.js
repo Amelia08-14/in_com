@@ -3,6 +3,7 @@ const router = require('express').Router();
 const { q, one } = require('../db');
 const { allow } = require('../auth');
 const { notify, notifyRole, wrap, HttpError } = require('../util');
+const { pickCommercial, createServiceTask, reopenDossier, fmt } = require('../flow');
 
 async function clientProspect(user) {
   const p = await one('SELECT * FROM prospects WHERE client_user_id=?', [user.id]);
@@ -67,7 +68,7 @@ router.post('/tickets/:id/resolve', wrap(async (req, res) => {
   const t = await one('SELECT t.*, p.client_user_id FROM tickets t JOIN prospects p ON p.id=t.prospect_id WHERE t.id=?', [req.params.id]);
   if (!t) throw new HttpError(404, 'Ticket introuvable');
   await q("UPDATE tickets SET status='resolu' WHERE id=?", [t.id]);
-  if (t.client_user_id) await notify(t.client_user_id, `Ticket résolu : ${t.subject}`, '/espace-client/support');
+  if (t.client_user_id) await notify(t.client_user_id, `Ticket résolu : ${t.subject}. Répondez dans Support si le problème persiste.`, '/espace-client/support');
   res.json({ ok: true });
 }));
 
@@ -93,7 +94,12 @@ router.post('/orders', allow('client'), wrap(async (req, res) => {
   if (!s) throw new HttpError(400, 'Service invalide');
   const qty = Math.max(1, Number(req.body.quantity) || 1);
   const r = await q('INSERT INTO orders (prospect_id, service_id, quantity, price, note) VALUES (?,?,?,?,?)', [p.id, s.id, qty, s.price * qty, req.body.note || null]);
-  await notifyRole(['commercial_sedentaire', 'responsable_commercial', 'admin'], `Commande extra : ${p.name} — ${s.name}`, '/dashboard/commandes');
+  // Le commercial qui a signé le client (sinon celui qui le connaît) confirme la commande avec lui
+  const signer = await one('SELECT u.id FROM dossiers d JOIN users u ON u.id=d.signed_by AND u.active=1 WHERE d.prospect_id=? ORDER BY d.id DESC LIMIT 1', [p.id]);
+  const who = signer || await pickCommercial(p.id);
+  const msg = `Extra commandé par ${p.name} : ${qty > 1 ? `${qty} × ` : ''}${s.name} (${fmt(s.price * qty)}). Confirmez avec le client puis validez la commande.`;
+  if (who) await notify(who.id, msg, '/dashboard/commandes');
+  else await notifyRole('responsable_commercial', msg, '/dashboard/commandes');
   res.json({ id: r.insertId });
 }));
 
@@ -102,7 +108,9 @@ router.post('/orders/:id/validate', allow('commercial_sedentaire', 'responsable_
   const o = await one('SELECT o.*, p.name FROM orders o JOIN prospects p ON p.id=o.prospect_id WHERE o.id=?', [req.params.id]);
   if (!o || o.status !== 'en_attente') throw new HttpError(400, 'Commande non valide');
   await q("UPDATE orders SET status='recouvrement', validated_by=? WHERE id=?", [req.user.id, o.id]);
-  await notifyRole('recouvrement', `Commande validée, client prêt à payer : ${o.name} (${o.price} DA)`, '/dashboard/commandes');
+  await notifyRole('recouvrement', `Encaisser l’extra de ${o.name} : ${fmt(o.price)}. Marquez la commande encaissée : la production démarre aussitôt.`, '/dashboard/commandes');
+  const cu = await one('SELECT client_user_id FROM prospects WHERE id=?', [o.prospect_id]);
+  if (cu?.client_user_id) await notify(cu.client_user_id, `Votre commande est confirmée (${fmt(o.price)}) : notre service facturation vous contacte pour le paiement.`, '/espace-client/extras');
   res.json({ ok: true });
 }));
 
@@ -111,9 +119,19 @@ router.post('/orders/:id/cancel', allow('commercial_sedentaire', 'responsable_co
   res.json({ ok: true });
 }));
 
+// Extra encaissé : une tâche de production est créée et suit la même validation qu'une conception
 router.post('/orders/:id/paid', allow('recouvrement'), wrap(async (req, res) => {
-  await q("UPDATE orders SET status='payee' WHERE id=? AND status='recouvrement'", [req.params.id]);
-  res.json({ ok: true });
+  const o = await one('SELECT o.*, s.name AS service, p.client_user_id FROM orders o JOIN services s ON s.id=o.service_id JOIN prospects p ON p.id=o.prospect_id WHERE o.id=?', [req.params.id]);
+  if (!o || o.status !== 'recouvrement') throw new HttpError(400, 'Commande non encaissable');
+  await q("UPDATE orders SET status='payee' WHERE id=?", [o.id]);
+  const dossier = await one("SELECT id FROM dossiers WHERE prospect_id=? AND status<>'signe' ORDER BY id DESC LIMIT 1", [o.prospect_id]);
+  const taskId = await createServiceTask({ prospectId: o.prospect_id, dossierId: dossier?.id, label: o.service, quantity: o.quantity, byUserId: req.user.id, origin: 'Extra' });
+  if (taskId) {
+    await q('UPDATE orders SET task_id=? WHERE id=?', [taskId, o.id]);
+    if (dossier) await reopenDossier(dossier.id, `Extra payé : ${o.service}`);
+  }
+  if (o.client_user_id) await notify(o.client_user_id, `Paiement reçu pour votre extra « ${o.service} » : la production démarre, vous le validerez dans « À valider ».`, '/espace-client/a-valider');
+  res.json({ ok: true, task_id: taskId });
 }));
 
 module.exports = router;

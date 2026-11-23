@@ -32,7 +32,7 @@ const validation: NavItem = { href: '/dashboard/validation', label: 'Validation'
 const gdTeam: NavItem = { href: '/dashboard/equipe-gd', label: 'Équipe graphistes', icon: I.chart };
 const myStats: NavItem = { href: '/dashboard/mon-reporting', label: 'Mon reporting', icon: I.chart };
 const usersNav: NavItem = { href: '/dashboard/utilisateurs', label: 'Utilisateurs', icon: I.team };
-const leads: NavItem = { href: '/dashboard/demandes', label: 'Demandes du site', icon: I.inbox };
+const leads: NavItem = { href: '/dashboard/demandes', label: 'Demandes à rappeler', icon: I.inbox };
 const carts: NavItem = { href: '/dashboard/paniers', label: 'Paniers et devis', icon: I.cart };
 const team: NavItem = { href: '/dashboard/collaborateurs', label: 'Collaborateurs', icon: I.users };
 const site: NavItem = { href: '/dashboard/site', label: 'Site web', icon: I.globe };
@@ -41,7 +41,7 @@ const myDossiers: NavItem = { ...dossiers, label: 'Mes dossiers' };
 export const NAV: Record<string, NavItem[]> = {
   admin: [dash, univers, reporting, deals, cal, dossiers, clients, tasks, validation, gdTeam, sav, orders, carts, leads, team, usersNav, site],
   responsable_commercial: [dash, univers, reporting, deals, cal, carts, leads, sav, orders, team],
-  commercial_sedentaire: [dash, univers, reporting, deals, cal, carts, sav, orders, team],
+  commercial_sedentaire: [dash, leads, univers, reporting, deals, cal, carts, sav, orders, team],
   commercial_terrain: [dash, univers, reporting, deals, cal, carts, team],
   responsable_communication: [dash, dossiers, clients, tasks, validation, gdTeam, sav, team],
   responsable_technique: [dash, validation, tasks, dossiers, clients, gdTeam, sav, team],
@@ -51,7 +51,7 @@ export const NAV: Record<string, NavItem[]> = {
   developpeur: [dash, { ...tasks, label: 'Mes tâches' }, myDossiers, { ...clients, label: 'Mes clients' }, sav, team],
   media_buyer: [dash, { ...tasks, label: 'Mes tâches' }, myDossiers, { ...clients, label: 'Mes clients' }, team],
   community_manager: [dash, { ...validation, label: 'À publier' }, dossiers, { ...clients, label: 'Mes clients' }, team],
-  recouvrement: [dash, orders, sav, team],
+  recouvrement: [dash, { ...dossiers, label: 'Dossiers à encaisser' }, orders, sav, team],
 };
 
 // Espace client (/espace-client) : séparé du CRM de l'équipe

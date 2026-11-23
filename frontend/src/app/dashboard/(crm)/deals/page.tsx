@@ -37,6 +37,19 @@ function EditDeal({ deal, onClose, onDone }: { deal: any; onClose: () => void; o
   );
 }
 
+// Prochaine étape d'un deal, dite à la personne qui regarde : à elle d'agir, ou qui attendre
+function dealNext(d: any, meId: number, isManager: boolean): [string, boolean] {
+  const mine = d.assigned_to === meId || (!d.assigned_to && d.created_by === meId);
+  switch (d.status) {
+    case 'a_attribuer': return isManager ? ['À vous : choisir le commercial', true] : ['Attribution par le responsable commercial', false];
+    case 'attribue': return mine || isManager ? ['À vous : appeler et programmer le RDV', true] : [`Programmation par ${d.assigned_name || 'le commercial'}`, false];
+    case 'programme': return mine || isManager ? ['Après le RDV : enregistrer l’issue', true] : [`RDV de ${d.assigned_name || 'du commercial'}`, false];
+    case 'a_relancer': return d.created_by === meId || isManager ? ['À vous : rappeler et fixer une nouvelle date', true] : ['Relance par le créateur du deal', false];
+    case 'gagne': return ['Client signé : le dossier suit tout seul', false];
+    default: return ['Clos', false];
+  }
+}
+
 export default function Deals() {
   const me = useMe();
   const run = useAction();
@@ -82,7 +95,7 @@ export default function Deals() {
                 <tr key={d.id}>
                   <td><b>{d.prospect_name}</b><span className="sub">{d.sector} · {d.phone} · {d.visits} visites</span></td>
                   <td>{d.type === 'terrain' ? 'Terrain' : 'Bureau'}</td>
-                  <td><Badge map={DEAL_STATUS} value={d.status} /></td>
+                  <td><Badge map={DEAL_STATUS} value={d.status} />{(() => { const [t, act] = dealNext(d, me.id, isManager); return <span className={`next-hint ${act ? '' : 'wait'}`}>{t}</span>; })()}</td>
                   <td>{d.created_by_name}<span className="sub">{fmtDate(d.created_at)}</span></td>
                   <td>
                     {isManager && !['gagne', 'perdu'].includes(d.status) ? (

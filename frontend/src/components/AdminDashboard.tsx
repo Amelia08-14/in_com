@@ -329,7 +329,7 @@ export default function AdminDashboard({ data, period, setPeriod, name }: { data
         {show('dossiers') && <section className="panel">
           <div className="panel-head"><div><h2>Dossiers clients</h2><p>{pipeTotal} dossiers, par étape.</p></div><Link href="/dashboard/dossiers" className="panel-link">Tout voir</Link></div>
           <div className="hbars">
-            {['signe', 'paiement_confirme', 'creation_en_cours', 'en_attente_validation', 'modification_demandee', 'publie', 'livre'].map((k) => (
+            {['signe', 'creation_en_cours', 'livre'].map((k) => (
               <Link key={k} href={`/dashboard/dossiers?status=${k}`} className="hbar-link">
                 <HBar label={DOSSIER_STATUS[k]?.[0] || k} value={pipe[k] || 0} max={Math.max(1, ...Object.values(pipe) as number[])} display={fmtN(pipe[k] || 0)} color={C.navy} />
               </Link>

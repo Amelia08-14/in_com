@@ -7,7 +7,8 @@ DROP TABLE IF EXISTS dossier_items, cart_events, cart_items, carts, notification
   task_history, task_versions, tasks, client_assignments, dossier_history, dossiers,
   deal_history, deals, reports, prospects, offers, user_sectors, sectors, users;
 
-SET FOREIGN_KEY_CHECKS = 1;
+-- Les contrôles restent coupés pendant la création : quelques tables référencent des tables créées plus bas
+-- (dossier_items → services, carts → dossiers, orders → tasks). Ils sont réactivés à la fin du fichier.
 
 -- ───────────── Utilisateurs & rôles ─────────────
 CREATE TABLE users (
@@ -299,7 +300,9 @@ CREATE TABLE orders (
   status ENUM('en_attente','validee','recouvrement','payee','annulee') NOT NULL DEFAULT 'en_attente',
   validated_by INT NULL,
   note VARCHAR(500),
+  task_id INT NULL,                        -- tâche de production créée au paiement
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_orders_task FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE SET NULL,
   FOREIGN KEY (prospect_id) REFERENCES prospects(id) ON DELETE CASCADE,
   FOREIGN KEY (service_id) REFERENCES services(id),
   FOREIGN KEY (validated_by) REFERENCES users(id) ON DELETE SET NULL
@@ -315,7 +318,11 @@ CREATE TABLE contact_requests (
   offer VARCHAR(40),
   message TEXT,
   prospect_id INT NULL,
-  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+  assigned_to INT NULL,                    -- commercial chargé de rappeler
+  handled_at DATETIME NULL,                -- premier appel ou visite déclaré sur la fiche
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX (assigned_to),
+  CONSTRAINT fk_requests_user FOREIGN KEY (assigned_to) REFERENCES users(id) ON DELETE SET NULL
 );
 
 CREATE TABLE notifications (
@@ -339,6 +346,7 @@ CREATE TABLE carts (
   email VARCHAR(160),
   message TEXT,
   prospect_id INT NULL,
+  dossier_id INT NULL,                     -- dossier créé à la signature : le panier suit ensuite ce dossier
   user_id INT NULL,                        -- compte client qui a envoyé le panier
   created_by INT NULL,                     -- membre de l'équipe qui a saisi la demande de devis
   assigned_to INT NULL,
@@ -350,7 +358,8 @@ CREATE TABLE carts (
   FOREIGN KEY (prospect_id) REFERENCES prospects(id) ON DELETE SET NULL,
   CONSTRAINT fk_carts_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
   CONSTRAINT fk_carts_creator FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
-  FOREIGN KEY (assigned_to) REFERENCES users(id) ON DELETE SET NULL
+  FOREIGN KEY (assigned_to) REFERENCES users(id) ON DELETE SET NULL,
+  CONSTRAINT fk_carts_dossier FOREIGN KEY (dossier_id) REFERENCES dossiers(id) ON DELETE SET NULL
 );
 
 CREATE TABLE cart_items (
@@ -376,3 +385,5 @@ CREATE TABLE cart_events (
   FOREIGN KEY (cart_id) REFERENCES carts(id) ON DELETE CASCADE,
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
 );
+
+SET FOREIGN_KEY_CHECKS = 1;
