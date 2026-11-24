@@ -223,6 +223,10 @@ function dossierStep(d: any, me: any): Step {
       you: d.signed_by === me.id ? 'Appelez le client pour son avis et proposez la suite (extra, renouvellement).'
         : monthly ? 'La production du mois est terminée. Le dossier repasse en production avec les tâches du mois suivant.' : 'Toutes les tâches sont validées.' };
   }
+  // En production sans formule : aucune tâche ne peut être créée
+  if (!d.offer_id) return ['responsable_communication', 'admin'].includes(role)
+    ? { title: 'Choisir la formule du client', you: 'Ce dossier est en production sans formule : aucune tâche n’est créée. Choisissez un pack ou une formule sur mesure dans « Modifier le dossier ».', then: 'l’équipe manquante est attribuée et les tâches du jour sont créées aussitôt.' }
+    : { tone: 'wait', title: 'Formule manquante', you: 'Aucune tâche n’est créée tant que le responsable communication n’a pas choisi la formule (pack ou sur mesure).' };
   const progress = progressText(d.progress);
   if (role === 'client') return { tone: 'wait', title: 'Production en cours', you: progress, then: 'validez chaque contenu dans « À valider ». Le projet passe « Livré » quand tout est produit.' };
   if (role === 'charge_clientele') return { title: 'Faire valider le client', you: `${progress}. Relancez le client si un contenu attend depuis plus de 48 h.`, then: 'chaque contenu validé part au community manager.' };

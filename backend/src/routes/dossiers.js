@@ -132,6 +132,11 @@ router.patch('/:id', allow('responsable_communication'), wrap(async (req, res) =
       launch = await launchProduction(d.id, req.user.id);
     }
   }
+  // Formule choisie ou changée sur un dossier déjà en production : l'équipe manquante est attribuée
+  // et les tâches du jour sont créées tout de suite (sans attendre le lendemain)
+  if (!launch && f.offer_id && (f.status || d.status) === 'creation_en_cours') {
+    launch = await launchProduction(d.id, req.user.id);
+  }
   res.json({ ok: true, launch });
 }));
 
