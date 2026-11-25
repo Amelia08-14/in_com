@@ -290,8 +290,8 @@ function PaymentCard({ d, onDone }: { d: any; onDone: () => void }) {
   return (
     <div className="card">
       <h2>Encaisser et lancer la production</h2>
-      {!d.offer_id && <p className="form-err" style={{ margin: '0 0 10px' }}>Choisissez la formule dans « Modifier le dossier » plus bas, puis cliquez « Enregistrer les modifications » : le plan de paiement s’affiche ici.</p>}
-      {!d.engagement_months && d.offer_id && <p className="progress-line" style={{ margin: '0 0 10px', color: 'var(--warn)' }}>Période d’engagement non précisée : le contrat est compté sur 1 mois. Précisez-la dans « Modifier le dossier » pour payer en plusieurs fois.</p>}
+      {!d.offer_id && <p className="form-err" style={{ margin: '0 0 10px' }}>Choisissez la formule dans « Modifier le dossier » juste au-dessus, puis cliquez « Enregistrer les modifications » : le plan de paiement s’affiche ici.</p>}
+      {!d.engagement_months && d.offer_id && <p className="progress-line" style={{ margin: '0 0 10px', color: 'var(--warn)' }}>Période d’engagement non précisée : le contrat est compté sur 1 mois. Précisez-la dans « Modifier le dossier » juste au-dessus pour payer en plusieurs fois.</p>}
       <p className="progress-line" style={{ margin: '0 0 10px' }}>Contrat : <b>{fmtDA(total)}</b>{d.engagement_months ? ` (${d.engagement_months} mois × ${fmtDA(monthly)}${total > monthly * d.engagement_months ? ' + services' : ''})` : ''}</p>
       {d.offer_id && (
         <div className="plan-choice" role="radiogroup" aria-label="Plan de paiement">
@@ -420,9 +420,9 @@ function DossierModal({ id, onClose, onDone }: { id: number; onClose: () => void
   return (
     <Modal title={d.title} onClose={onClose} wide>
       <Flow status={d.status} />
-      <NextStep step={dossierStep(d, me)} />
-      {canPay && <PaymentCard d={d} onDone={done} key={`${d.contract_total}-${d.engagement_months}`} />}
-      {d.status !== 'signe' && me.role !== 'client' && <PaymentsCard d={d} canCash={CASHIERS.includes(me.role)} onDone={done} key={`${d.paid_total}-${d.contract_total}`} />}
+      <NextStep step={dossierStep(d, me)}>
+        {canPay && <button className="btn btn-primary btn-sm" onClick={() => document.getElementById('paiement-dossier')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>Aller au paiement</button>}
+      </NextStep>
       <dl className="kv">
         <dt>Client</dt><dd>{d.client_name}</dd>
         <dt>Prestation</dt><dd>{SERVICE_TYPE[d.service_type]}</dd>
@@ -441,6 +441,10 @@ function DossierModal({ id, onClose, onDone }: { id: number; onClose: () => void
       {d.client && <ClientCard c={d.client} />}
       {d.client && <DriveCard d={d} canEdit={canDrive} onDone={done} key={d.client.drive_url || 'none'} />}
       {canEdit && <EditDossier d={d} onDone={done} key={`${d.status}-${d.payment_status}-${d.offer_id}`} />}
+      <div id="paiement-dossier" style={{ display: 'grid', gap: 18 }}>
+      {canPay && <PaymentCard d={d} onDone={done} key={`${d.contract_total}-${d.engagement_months}`} />}
+      {d.status !== 'signe' && me.role !== 'client' && <PaymentsCard d={d} canCash={CASHIERS.includes(me.role)} onDone={done} key={`${d.paid_total}-${d.contract_total}`} />}
+      </div>
 
       {isResp && d.status !== 'signe' && (
         <TeamForm d={d} staff={staff || []} onDone={done} key={`${d.cc_id}-${d.team.map((t: any) => `${t.role}:${t.id}`).join(',')}`} />
