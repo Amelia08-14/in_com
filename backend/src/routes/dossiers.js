@@ -113,6 +113,7 @@ router.patch('/:id', allow('responsable_communication'), wrap(async (req, res) =
     if (b.payment_status === 'paye' && !d.payment_confirmed_at) f.payment_confirmed_at = new Date();
   }
   if (b.service_type) f.service_type = b.service_type;
+  if (b.engagement_months !== undefined) f.engagement_months = [1, 3, 6, 12].includes(Number(b.engagement_months)) ? Number(b.engagement_months) : null;
   if (b.title) f.title = String(b.title).slice(0, 200);
   if (b.status && b.status !== d.status) {
     if (!STATUSES.includes(b.status)) throw new HttpError(400, 'Statut invalide');

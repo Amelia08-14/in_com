@@ -116,10 +116,7 @@ CREATE TABLE reports (
   user_id INT NOT NULL,
   prospect_id INT NOT NULL,
   channel ENUM('appel','visite') NOT NULL,
-  reason ENUM(
-    'prospect','relance_sedentaire','relance_terrain','relance_visite',
-    'deal_terrain','deal_bureau','promesse','a_eviter','signe','issue_deal'
-  ) NOT NULL,
+  reason VARCHAR(30) NOT NULL,             -- raisons d'appel ou de visite : voir REASONS dans routes/commercial.js
   entry_type ENUM('prospect','deal') NOT NULL DEFAULT 'prospect',
   outcome VARCHAR(30),
   notes TEXT,
@@ -172,6 +169,7 @@ CREATE TABLE dossiers (
   payment_mode ENUM('bureau','terrain','virement') DEFAULT 'bureau',
   payment_status ENUM('en_attente','paye','non_paye') NOT NULL DEFAULT 'en_attente',
   amount INT DEFAULT 0,
+  engagement_months TINYINT NULL,          -- période d'engagement de la formule signée
   payment_confirmed_at DATETIME NULL,
   validated_at DATETIME NULL,              -- validé par le client, en attente de publication CM
   next_followup DATE NULL,

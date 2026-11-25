@@ -167,14 +167,14 @@ function CartModal({ id, onClose, onDone }: { id: number; onClose: () => void; o
     // La formule du devis est reprise d'office : pack, ou formule sur mesure avec ses quotas et ses services
     const sur = c?.items.find((i: any) => i.kind === 'custom');
     if (sur) {
-      setSign({ ...EMPTY_SIGN, offer_id: 'custom', custom: {
+      setSign({ ...EMPTY_SIGN, offer_id: 'custom', engagement_months: String(sur.months || 6), custom: {
         ...EMPTY_CUSTOM, posts_month: sur.posts_month || 0, stories_month: sur.stories_month || 0, reels_month: sur.reels_month || 0, price_month: sur.unit_price,
         items: c.items.filter((i: any) => i.kind === 'service').map((i: any) => ({ service_id: i.ref, label: i.label, quantity: i.quantity, unit_price: i.unit_price })),
       } });
     } else {
-      const code = c?.items.find((i: any) => i.kind === 'offer')?.ref;
-      const o = offers?.find((x) => x.code === code);
-      setSign({ ...EMPTY_SIGN, offer_id: o ? String(o.id) : '' });
+      const pack = c?.items.find((i: any) => i.kind === 'offer');
+      const o = offers?.find((x) => x.code === pack?.ref);
+      setSign({ ...EMPTY_SIGN, offer_id: o ? String(o.id) : '', engagement_months: String(pack?.months || 6) });
     }
     setSigning(true);
   };

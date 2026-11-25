@@ -72,7 +72,7 @@ function EditDossier({ d, onDone }: { d: any; onDone: () => void }) {
   const toast = useToast();
   const { data: offers } = useData<any[]>('/offers');
   const isCustom = !!d.offer?.custom_dossier_id;
-  const [f, setF] = useState<any>({ offer_id: isCustom ? 'custom' : (d.offer_id || ''), amount: d.amount || 0, payment_mode: d.payment_mode || 'bureau', service_type: d.service_type, status: d.status, note: '' });
+  const [f, setF] = useState<any>({ offer_id: isCustom ? 'custom' : (d.offer_id || ''), amount: d.amount || 0, engagement_months: d.engagement_months || '', payment_mode: d.payment_mode || 'bureau', service_type: d.service_type, status: d.status, note: '' });
   const [custom, setCustom] = useState<any>({
     posts_month: isCustom ? d.offer.posts_month : 0, stories_month: isCustom ? d.offer.stories_month : 0, reels_month: isCustom ? d.offer.reels_month : 0,
     price_month: isCustom ? d.offer.price_month : 0,
@@ -95,6 +95,11 @@ function EditDossier({ d, onDone }: { d: any; onDone: () => void }) {
           </select>
         </label>
         <label className="field"><span>Montant (DA)</span><input className="input" type="number" value={f.amount} onChange={set('amount')} /></label>
+        <label className="field"><span>Période d’engagement</span>
+          <select className="select" value={f.engagement_months} onChange={set('engagement_months')}>
+            <option value="">Non précisée</option>{[1, 3, 6, 12].map((m) => <option key={m} value={m}>{m} mois</option>)}
+          </select>
+        </label>
         <label className="field"><span>Mode de paiement</span>
           <select className="select" value={f.payment_mode} onChange={set('payment_mode')}><option value="bureau">Au bureau</option><option value="terrain">Sur le terrain</option><option value="virement">Virement</option></select>
         </label>
@@ -123,6 +128,16 @@ function EditDossier({ d, onDone }: { d: any; onDone: () => void }) {
 }
 
 // Tâches précises du dossier : intitulé, consigne et échéance pour un collaborateur
+// Les tâches de la formule sont automatiques : on le dit clairement, avec les quantités
+function autoText(d: any) {
+  const o = d.offer;
+  const q = o ? [o.posts_month && `${o.posts_month} posts`, o.stories_month && `${o.stories_month} stories`, o.reels_month && `${o.reels_month} reels`].filter(Boolean).join(', ') : '';
+  if (!o) return 'Tâches automatiques : choisissez d’abord la formule (pack ou sur mesure), le CRM répartira ensuite les tâches tout seul.';
+  if (!q) return 'Cette formule n’a pas de quota mensuel : seuls ses services ponctuels deviennent des tâches, au paiement.';
+  if (d.status === 'signe') return `Tâches automatiques : dès le paiement confirmé, ${q} par mois sont répartis chaque jour ouvré entre les tâches du graphiste. Rien à créer à la main.`;
+  return `Tâches automatiques : ${q} par mois, réparties chaque jour ouvré pour le graphiste du client. Le formulaire ci-dessus ne sert qu’aux demandes en plus de la formule.`;
+}
+
 function DossierTasks({ d, canCreate, onDone }: { d: any; canCreate: boolean; onDone: () => void }) {
   const run = useAction();
   const isAdmin = useMe().role === 'admin';
@@ -135,8 +150,9 @@ function DossierTasks({ d, canCreate, onDone }: { d: any; canCreate: boolean; on
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
         <h4 style={{ fontSize: 15, margin: 0 }}>Tâches du client</h4>
-        {canCreate && !open && <button className="btn btn-dark btn-sm" onClick={() => setOpen(true)}>+ Donner une tâche</button>}
+        {canCreate && !open && <button className="btn btn-ghost btn-sm" onClick={() => setOpen(true)}>+ Tâche ponctuelle (hors formule)</button>}
       </div>
+      <p className="progress-line" style={{ margin: '0 0 10px' }}>{autoText(d)}</p>
       {open && (
         <div className="card" style={{ marginBottom: 12 }}>
           <div className="grid-3">
@@ -191,6 +207,13 @@ function Flow({ status }: { status: string }) {
       ))}
     </div>
   );
+}
+
+// Fin de l'engagement : date du paiement + nombre de mois
+function engagementEnd(d: any) {
+  const t = new Date(String(d.payment_confirmed_at).replace(' ', 'T'));
+  t.setMonth(t.getMonth() + Number(d.engagement_months));
+  return t.toISOString().slice(0, 10);
 }
 
 // Avancement de la production : du mois (abonnement) ou du projet
@@ -329,6 +352,7 @@ function DossierModal({ id, onClose, onDone }: { id: number; onClose: () => void
           {d.items?.length > 0 && <span className="sub">{d.items.map((i: any) => `${i.quantity} × ${i.label}`).join(' · ')} · {fmtDA(d.items.reduce((sum: number, i: any) => sum + i.total, 0))} ponctuel</span>}
         </> : <span className="badge danger">Formule à choisir</span>}</dd>
         <dt>Montant</dt><dd>{fmtDA(d.amount)} · paiement {d.payment_mode} · <Badge map={PAYMENT_STATUS} value={d.payment_status || 'en_attente'} /></dd>
+        <dt>Engagement</dt><dd>{d.engagement_months ? <>{d.engagement_months} mois{d.payment_confirmed_at && <> · jusqu’au {fmtDate(engagementEnd(d))}</>}</> : <span className="badge warn">À préciser</span>}</dd>
         <dt>Paiement confirmé</dt><dd>{fmtDate(d.payment_confirmed_at, true)}</dd>
         <dt>Équipe</dt><dd>{d.team.length ? d.team.map((t: any) => `${t.name} (${ROLE_LABELS[t.role] || t.role})`).join(', ') : '—'}</dd>
         {d.status !== 'signe' && <><dt>Avancement</dt><dd>{progressText(d.progress)}</dd></>}

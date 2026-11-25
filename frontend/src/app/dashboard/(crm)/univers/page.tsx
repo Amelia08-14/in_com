@@ -19,7 +19,7 @@ export default function Univers() {
     <>
       <PageHead
         title="Univers"
-        sub={me.role === 'commercial_terrain' ? 'Les prospects de vos secteurs, avec tout leur historique.' : 'Tous les prospects et clients, tous secteurs confondus.'}
+        sub={me.role === 'commercial_terrain' ? 'Les prospects de vos secteurs, les fiches sans secteur et celles que vous avez déjà visitées, avec tout leur historique.' : 'Tous les prospects et clients, tous secteurs confondus.'}
       />
       <div className="filters">
         <input className="input" placeholder="Rechercher un nom, téléphone, spécialité…" value={f.search} onChange={set('search')} style={{ minWidth: 280 }} />

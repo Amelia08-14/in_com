@@ -101,7 +101,7 @@ const hasCustom = (c) => !!c && (int(c.posts_month) + int(c.stories_month) + int
 
 // ───────── 2. Signature : un seul geste, depuis le reporting, un deal ou un devis ─────────
 // Exige la formule et les documents ; un dossier déjà signé et pas encore payé est réutilisé (pas de doublon).
-async function signClient(prospectId, userId, { documents_url, offer_id, service_type, custom = null, cartId = null } = {}) {
+async function signClient(prospectId, userId, { documents_url, offer_id, service_type, custom = null, cartId = null, engagement_months = null } = {}) {
   const docs = String(documents_url || '').trim();
   if (!docs) throw new HttpError(400, 'Documents obligatoires pour un client signé (lien Drive ou photos : contrat, registre de commerce, agrément)');
   if (!offer_id) throw new HttpError(400, 'Choisissez la formule signée : un pack ou une formule sur mesure');
@@ -117,6 +117,9 @@ async function signClient(prospectId, userId, { documents_url, offer_id, service
   const type = given || 'abonnement';
   const signer = await one('SELECT name, role FROM users WHERE id=?', [userId]);
   const cart = cartId ? await one('SELECT * FROM carts WHERE id=?', [cartId]) : null;
+  // Période d'engagement : choisie à la signature, sinon reprise du devis (durée de la formule)
+  const cartMonths = cart ? (await one("SELECT months FROM cart_items WHERE cart_id=? AND kind IN ('offer','custom') LIMIT 1", [cart.id]))?.months : null;
+  const engagement = [1, 3, 6, 12].includes(Number(engagement_months)) ? Number(engagement_months) : (cartMonths || null);
   const services = cart ? await q("SELECT ref, label, quantity, unit_price, total FROM cart_items WHERE cart_id=? AND kind='service'", [cart.id]) : [];
   // Formule sur mesure définie dès la signature : quotas, services et prix choisis par le commercial
   const sur = !offer && hasCustom(custom);
@@ -129,12 +132,12 @@ async function signClient(prospectId, userId, { documents_url, offer_id, service
   let dossierId;
   if (existing) {
     dossierId = existing.id;
-    await q('UPDATE dossiers SET offer_id=COALESCE(?, offer_id), service_type=COALESCE(?, service_type), title=?, amount=GREATEST(amount, ?) WHERE id=?', [offer?.id || null, given, title, amount, dossierId]);
+    await q('UPDATE dossiers SET offer_id=COALESCE(?, offer_id), service_type=COALESCE(?, service_type), title=?, amount=GREATEST(amount, ?), engagement_months=COALESCE(?, engagement_months) WHERE id=?', [offer?.id || null, given, title, amount, engagement, dossierId]);
     await logDossier(dossierId, userId, 'signe', cart ? `Devis ${cart.code} confirmé` : 'Signature confirmée');
   } else {
     const r = await q(
-      "INSERT INTO dossiers (prospect_id, offer_id, title, service_type, signed_by, status, amount, payment_mode) VALUES (?,?,?,?,?, 'signe', ?, ?)",
-      [prospectId, offer?.id || null, title, type, userId, amount, signer?.role === 'commercial_terrain' ? 'terrain' : 'bureau']);
+      "INSERT INTO dossiers (prospect_id, offer_id, title, service_type, signed_by, status, amount, engagement_months, payment_mode) VALUES (?,?,?,?,?, 'signe', ?, ?, ?)",
+      [prospectId, offer?.id || null, title, type, userId, amount, engagement, signer?.role === 'commercial_terrain' ? 'terrain' : 'bureau']);
     dossierId = r.insertId;
     await logDossier(dossierId, userId, 'signe', cart ? `Signature commerciale · devis ${cart.code}` : 'Signature commerciale');
   }

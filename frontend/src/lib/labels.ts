@@ -30,7 +30,18 @@ export const SOURCE_LABEL: Record<string, string> = {
 };
 
 export const REASON_LABEL: Record<string, string> = {
-  prospect: 'Prospect',
+  prospect: 'Premier contact (prospect)',
+  interesse: 'Intéressé, à recontacter',
+  devis_demande: 'Demande un devis',
+  rappel: 'Rappeler plus tard (à sa demande)',
+  injoignable: 'Pas de réponse / injoignable',
+  absent: 'Responsable absent, à repasser',
+  reflexion: 'En réflexion',
+  pas_interesse: 'Pas intéressé pour l’instant',
+  deja_prestataire: 'A déjà une agence / un prestataire',
+  budget: 'Budget insuffisant',
+  mauvais_numero: 'Mauvais numéro',
+  ferme: 'Établissement fermé / introuvable',
   relance_sedentaire: 'Relance prospect sédentaire',
   relance_terrain: 'Relance prospect terrain',
   relance_visite: 'Relance visite commerciale',

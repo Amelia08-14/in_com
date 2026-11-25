@@ -7,23 +7,42 @@ import { useMe } from '@/lib/me';
 import { DEAL_STATUS, PROSPECT_LABEL, REASON_LABEL } from '@/lib/labels';
 import SignFields, { EMPTY_SIGN, signBody, signReady, type Sign } from '@/components/SignFields';
 
-const REASONS: Record<string, string[]> = {
-  commercial_sedentaire: ['prospect', 'relance_sedentaire', 'relance_terrain', 'relance_visite', 'deal_terrain', 'deal_bureau', 'signe'],
-  commercial_terrain: ['prospect', 'promesse', 'a_eviter', 'signe'],
-  responsable_commercial: ['prospect', 'relance_sedentaire', 'relance_terrain', 'relance_visite', 'deal_terrain', 'deal_bureau', 'promesse', 'a_eviter', 'signe'],
-  admin: ['prospect', 'relance_sedentaire', 'deal_terrain', 'deal_bureau', 'signe'],
-};
+// Raisons proposées : appel (sédentaire) ou visite (terrain). Le responsable commercial a les deux listes.
+const CALL = ['prospect', 'interesse', 'devis_demande', 'rappel', 'injoignable', 'reflexion', 'relance_sedentaire', 'relance_terrain', 'relance_visite',
+  'deal_terrain', 'deal_bureau', 'promesse', 'pas_interesse', 'deja_prestataire', 'budget', 'mauvais_numero', 'a_eviter', 'signe'];
+const VISIT = ['prospect', 'interesse', 'devis_demande', 'absent', 'reflexion', 'relance_visite', 'deal_bureau', 'promesse',
+  'pas_interesse', 'deja_prestataire', 'budget', 'ferme', 'a_eviter', 'signe'];
+// Regroupement dans la liste, pour trouver la bonne raison d'un coup d'œil
+const GROUPS: [string, string[]][] = [
+  ['Premier contact', ['prospect']],
+  ['Intérêt', ['interesse', 'devis_demande', 'reflexion', 'promesse']],
+  ['À reprendre', ['rappel', 'injoignable', 'absent', 'relance_sedentaire', 'relance_terrain', 'relance_visite']],
+  ['Rendez-vous', ['deal_terrain', 'deal_bureau']],
+  ['Refus ou problème', ['pas_interesse', 'deja_prestataire', 'budget', 'mauvais_numero', 'ferme', 'a_eviter']],
+  ['Signature', ['signe']],
+];
 
 const RULES: Record<string, string> = {
-  prospect: 'Si déjà prospecté par un autre commercial, la fiche passe automatiquement en Qualifié.',
+  prospect: 'Premier contact enregistré. Si un autre commercial l’a déjà contacté, ou dès la 2e visite, la fiche passe en Qualifié.',
+  interesse: 'La fiche passe en Qualifié. Prévoyez la relance.',
+  devis_demande: 'La fiche passe en Qualifié. Créez ensuite sa demande de devis dans « Paniers et devis ».',
+  rappel: 'Enregistré dans l’historique : rappelez-le à la date convenue (précisez-la dans les notes).',
+  injoignable: 'Enregistré dans l’historique : réessayez à un autre moment.',
+  absent: 'Enregistré dans l’historique : repassez quand le responsable est présent.',
+  reflexion: 'La fiche passe en Qualifié. Relancez-le dans quelques jours.',
   relance_sedentaire: 'Enregistrée dans l’historique de la fiche.',
   relance_terrain: 'Enregistrée dans l’historique de la fiche.',
   relance_visite: 'Enregistrée dans le reporting et dans l’historique de la fiche.',
   deal_terrain: 'Ajouté à Deals puis transmis au responsable, qui l’attribue au commercial terrain.',
   deal_bureau: 'Ajouté à Deals et attribué automatiquement à vous : à programmer.',
   promesse: 'La fiche passe en Promesse de signature.',
+  pas_interesse: 'Enregistré dans l’historique : la fiche reste dans l’Univers pour une relance plus tard.',
+  deja_prestataire: 'Enregistré dans l’historique : notez le nom de l’agence actuelle dans les notes.',
+  budget: 'Enregistré dans l’historique : proposez plus tard un pack plus petit ou un service à la carte.',
+  mauvais_numero: 'Noté sur la fiche : corrigez le numéro si vous le trouvez.',
+  ferme: 'Noté sur la fiche : vérifiez l’adresse avant de repasser.',
   a_eviter: 'La fiche passe en À éviter.',
-  signe: 'Client signé : formule et documents obligatoires. Le dossier est créé et part au recouvrement pour encaisser.',
+  signe: 'Client signé : formule, engagement et documents obligatoires. Le dossier est créé et part au recouvrement pour encaisser.',
 };
 
 function ReportForm({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
@@ -43,7 +62,7 @@ function ReportForm({ onClose, onDone }: { onClose: () => void; onDone: () => vo
   const manager = ['admin', 'responsable_commercial'].includes(me.role);
   const [mode, setMode] = useState<'appel' | 'visite'>(me.role === 'commercial_terrain' ? 'visite' : 'appel');
   const isVisit = mode === 'visite';
-  const reasons = isVisit ? REASONS.commercial_terrain : manager ? REASONS.responsable_commercial.filter((x) => !['promesse', 'a_eviter'].includes(x)) : (REASONS[me.role] || REASONS.admin);
+  const reasons = isVisit ? VISIT : CALL;
 
   useEffect(() => {
     if (picked || name.length < 2) { setMatches([]); return; }
@@ -137,7 +156,10 @@ function ReportForm({ onClose, onDone }: { onClose: () => void; onDone: () => vo
             <span>{isVisit ? 'Statut de la visite' : 'Raison de l’appel'}</span>
             <select className="select" value={reason} onChange={(e) => setReason(e.target.value)}>
               <option value="">Choisir…</option>
-              {reasons.map((r) => <option key={r} value={r}>{REASON_LABEL[r]}</option>)}
+              {GROUPS.map(([g, list]) => {
+                const shown = list.filter((r) => reasons.includes(r));
+                return shown.length ? <optgroup key={g} label={g}>{shown.map((r) => <option key={r} value={r}>{REASON_LABEL[r]}</option>)}</optgroup> : null;
+              })}
             </select>
           </label>
           {reason && <div className="notice">{RULES[reason]}</div>}

@@ -8,11 +8,12 @@ import CustomOffer, { EMPTY_CUSTOM, customReady } from '@/components/CustomOffer
 import { fmtDA } from '@/lib/api';
 import { SERVICE_TYPE } from '@/lib/labels';
 
-export type Sign = { offer_id: string; service_type: string; documents_url: string; custom: any };
-export const EMPTY_SIGN: Sign = { offer_id: '', service_type: 'abonnement', documents_url: '', custom: EMPTY_CUSTOM };
+export type Sign = { offer_id: string; service_type: string; engagement_months: string; documents_url: string; custom: any };
+export const EMPTY_SIGN: Sign = { offer_id: '', service_type: 'abonnement', engagement_months: '6', documents_url: '', custom: EMPTY_CUSTOM };
+export const ENGAGEMENTS = [1, 3, 6, 12];
 export const signReady = (s: Sign) => !!s.offer_id && !!s.documents_url.trim() && (s.offer_id !== 'custom' || customReady(s.custom));
 // Corps envoyé à l'API : la formule sur mesure n'est jointe que si elle est choisie
-export const signBody = (s: Sign) => ({ offer_id: s.offer_id, service_type: s.service_type, documents_url: s.documents_url, ...(s.offer_id === 'custom' ? { custom: s.custom } : {}) });
+export const signBody = (s: Sign) => ({ offer_id: s.offer_id, service_type: s.service_type, engagement_months: s.engagement_months, documents_url: s.documents_url, ...(s.offer_id === 'custom' ? { custom: s.custom } : {}) });
 
 export default function SignFields({ value, onChange }: { value: Sign; onChange: (s: Sign) => void }) {
   const { data: offers } = useData<any[]>('/offers');
@@ -26,6 +27,11 @@ export default function SignFields({ value, onChange }: { value: Sign; onChange:
             <option value="" disabled>Choisir un pack ou le sur mesure…</option>
             {offers?.filter((o) => o.active !== 0).map((o) => <option key={o.id} value={o.id}>Pack {o.name} · {fmtDA(o.price_month)} / mois</option>)}
             <option value="custom">Formule sur mesure (posts, stories, reels, services et prix au choix)</option>
+          </select>
+        </label>
+        <label className="field"><span>Période d’engagement *</span>
+          <select className="select" value={value.engagement_months} onChange={set('engagement_months')}>
+            {ENGAGEMENTS.map((m) => <option key={m} value={m}>{m} mois</option>)}
           </select>
         </label>
         <label className="field"><span>Prestation</span>

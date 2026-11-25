@@ -12,16 +12,34 @@ async function userSectorIds(userId) {
   return (await q('SELECT sector_id FROM user_sectors WHERE user_id=?', [userId])).map((r) => r.sector_id);
 }
 
-// Le commercial terrain ne voit que les prospects de ses secteurs
+// Le commercial terrain travaille d'abord sur ses secteurs, mais il n'est jamais bloqué :
+// il voit aussi les fiches sans secteur et celles qu'il a créées ou déjà visitées, et il peut
+// toujours déclarer une visite sur une fiche existante (même suivie par un sédentaire).
+async function terrainScope(userId) {
+  const s = await userSectorIds(userId);
+  if (!s.length) return { sql: '1=1', params: [] }; // aucun secteur attribué : toutes les fiches
+  return {
+    sql: '(p.sector_id IN (?) OR p.sector_id IS NULL OR p.created_by=? OR EXISTS (SELECT 1 FROM reports rr WHERE rr.prospect_id=p.id AND rr.user_id=?))',
+    params: [s, userId, userId],
+  };
+}
+
 async function scopeProspect(user, prospectId) {
   const p = await one('SELECT * FROM prospects WHERE id=?', [prospectId]);
   if (!p) throw new HttpError(404, 'Fiche introuvable');
-  if (user.role === 'commercial_terrain') {
-    const sectors = await userSectorIds(user.id);
-    if (!sectors.includes(p.sector_id)) throw new HttpError(403, 'Prospect hors de vos secteurs');
-  }
   return p;
 }
+
+// Raisons d'appel ou de visite, et leur effet sur la fiche
+const REASONS = [
+  'prospect', 'interesse', 'devis_demande', 'rappel', 'injoignable', 'absent', 'reflexion',
+  'relance_sedentaire', 'relance_terrain', 'relance_visite', 'deal_terrain', 'deal_bureau', 'promesse',
+  'pas_interesse', 'deja_prestataire', 'budget', 'mauvais_numero', 'ferme', 'a_eviter', 'signe',
+];
+// Ces raisons montrent un vrai intérêt : un prospect passe en Qualifié
+const QUALIFYING = ['interesse', 'devis_demande', 'reflexion', 'deal_terrain', 'deal_bureau'];
+// Ces raisons fixent elles-mêmes le label (pas de passage automatique en Qualifié)
+const FINAL = ['promesse', 'a_eviter', 'signe', 'mauvais_numero', 'ferme'];
 
 const PROSPECT_STATS = `
   (SELECT COUNT(*) FROM reports r WHERE r.prospect_id=p.id AND r.channel='visite') AS visits,
@@ -35,9 +53,9 @@ router.get('/prospects', allow(...COMMERCIAL, 'responsable_communication', 'char
   const where = ['1=1'];
   const params = [];
   if (req.user.role === 'commercial_terrain') {
-    const s = await userSectorIds(req.user.id);
-    where.push(s.length ? 'p.sector_id IN (?)' : '0');
-    if (s.length) params.push(s);
+    const t = await terrainScope(req.user.id);
+    where.push(t.sql);
+    params.push(...t.params);
   }
   if (label) { where.push('p.label=?'); params.push(label); }
   if (sector_id) { where.push('p.sector_id=?'); params.push(sector_id); }
@@ -117,6 +135,7 @@ router.post('/reports', allow('commercial_sedentaire', 'commercial_terrain', 're
   const channel = u.role === 'commercial_terrain' ? 'visite'
     : isManager(u) && ['appel', 'visite'].includes(req.body.channel) ? req.body.channel : 'appel';
   if (!reason) throw new HttpError(400, 'Raison obligatoire');
+  if (!REASONS.includes(reason)) throw new HttpError(400, 'Raison inconnue');
   // « Client signé » : formule et documents exigés avant tout enregistrement
   if (reason === 'signe' && (!documents_url || !req.body.offer_id)) {
     throw new HttpError(400, !documents_url ? 'Documents obligatoires pour un client signé (lien Drive ou photos : contrat, registre de commerce, agrément)'
@@ -148,15 +167,20 @@ router.post('/reports', allow('commercial_sedentaire', 'commercial_terrain', 're
 
   const effects = [];
   // Règles automatiques du CRM
-  if (reason === 'prospect' && !isNew && priorByOthers.n > 0 && before.label === 'prospect') {
-    await q("UPDATE prospects SET label='qualifie' WHERE id=?", [pid]);
-    effects.push('Déjà prospecté par un autre commercial : passé en Qualifié');
-  }
+  // Passage automatique en Qualifié (une seule fois, tant que la fiche est encore « Prospect »)
   const visits = await one("SELECT COUNT(*) n FROM reports WHERE prospect_id=? AND channel='visite'", [pid]);
-  if (visits.n > 2 && ['prospect'].includes(before.label)) {
-    await q("UPDATE prospects SET label='qualifie' WHERE id=?", [pid]);
-    effects.push('Plus de 2 visites : passé en Qualifié');
+  let why = null;
+  if (!FINAL.includes(reason) && before.label === 'prospect') {
+    if (QUALIFYING.includes(reason)) why = 'Intérêt confirmé : passé en Qualifié';
+    else if (!isNew && priorByOthers.n > 0) why = 'Déjà contacté par un autre commercial : passé en Qualifié';
+    else if (visits.n >= 2) why = `${visits.n}e visite : passé en Qualifié`;
   }
+  if (why) {
+    await q("UPDATE prospects SET label='qualifie' WHERE id=?", [pid]);
+    effects.push(why);
+  }
+  if (reason === 'devis_demande') effects.push('Créez sa demande de devis dans « Paniers et devis » pour lui envoyer le devis.');
+  if (['mauvais_numero', 'ferme'].includes(reason)) effects.push('Noté sur la fiche : vérifiez les coordonnées avant de relancer.');
   if (reason === 'promesse') { await q("UPDATE prospects SET label='promesse' WHERE id=?", [pid]); effects.push('Label : Promesse de signature'); }
   if (reason === 'a_eviter') { await q("UPDATE prospects SET label='a_eviter' WHERE id=?", [pid]); effects.push('Label : À éviter'); }
   if (reason === 'deal_terrain') {
@@ -171,7 +195,7 @@ router.post('/reports', allow('commercial_sedentaire', 'commercial_terrain', 're
     effects.push('Deal bureau créé et attribué : à programmer');
   }
   if (reason === 'signe') {
-    await signClient(pid, u.id, { documents_url, offer_id: req.body.offer_id, service_type: req.body.service_type, custom: req.body.custom });
+    await signClient(pid, u.id, { documents_url, offer_id: req.body.offer_id, service_type: req.body.service_type, custom: req.body.custom, engagement_months: req.body.engagement_months });
     effects.push('Client signé : dossier créé. Le recouvrement confirme le paiement, puis la production démarre toute seule. Vous serez prévenu.');
   }
   res.json({ ok: true, prospect_id: pid, effects });
@@ -282,7 +306,7 @@ router.post('/deals/:id/outcome', allow(...COMMERCIAL), wrap(async (req, res) =>
   await q("INSERT INTO reports (user_id, prospect_id, channel, reason, entry_type, outcome, notes, documents_url) VALUES (?,?,?, 'issue_deal', 'deal', ?, ?, ?)",
     [req.user.id, deal.prospect_id, channel, outcome, notes || null, documents_url || null]);
   await markLeadHandled(deal.prospect_id);
-  if (outcome === 'gagne') await signClient(deal.prospect_id, req.user.id, { documents_url, offer_id: req.body.offer_id, service_type: req.body.service_type, custom: req.body.custom });
+  if (outcome === 'gagne') await signClient(deal.prospect_id, req.user.id, { documents_url, offer_id: req.body.offer_id, service_type: req.body.service_type, custom: req.body.custom, engagement_months: req.body.engagement_months });
   if (outcome === 'a_relancer' && deal.created_by !== req.user.id) {
     const p = await one('SELECT name FROM prospects WHERE id=?', [deal.prospect_id]);
     await notify(deal.created_by, `Deal à relancer : ${p?.name}. Rappelez le prospect et programmez une nouvelle date dans Deals.`, '/dashboard/deals');
