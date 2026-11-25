@@ -10,7 +10,7 @@ import NextStep, { type Step } from '@/components/NextStep';
 const ACTION_LABEL: Record<string, string> = {
   generation: 'Tâche générée par le CRM', ouverture: 'Ouverte', creation: 'Conception ajoutée', modification: 'Modification terminée',
   validation_technique: 'Validée en interne', refus_technique: 'Refusée par le responsable technique', refus_cc: 'Modification demandée par le CC',
-  refus_client: 'Modification demandée par le client', validation_client: 'Validée', publication: 'Publiée', reattribution: 'Réattribuée', creation_manuelle: 'Créée',
+  refus_client: 'Modification demandée par le client', refus_cm: 'Modification demandée par le community manager', validation_client: 'Validée', publication: 'Publiée', reattribution: 'Réattribuée', creation_manuelle: 'Créée',
 };
 
 // Prochaine étape de la tâche, dite à la personne qui l'ouvre
@@ -28,7 +28,7 @@ function taskStep(t: any, me: any): Step {
       return me.role === 'responsable_technique' && !mine ? { title: 'Valider en interne', you: 'Ouvrez la version, puis validez ou demandez une modification avec une note précise.', then: 'validé, le contenu part chez le client ; refusé, il revient au créateur.' }
         : { tone: 'wait', title: 'En validation technique', you: 'Le responsable technique vérifie le contenu.' };
     case 'validation_client':
-      return ['client', 'charge_clientele'].includes(me.role) ? { title: me.role === 'client' ? 'Votre avis' : 'Faire valider le client', you: me.role === 'client' ? 'Ouvrez la version, puis validez ou demandez une modification.' : 'Présentez la version au client et enregistrez sa décision. Relancez-le après 48 h.', then: 'validé, le contenu part en publication ; sinon, il revient au créateur avec la note.' }
+      return ['client', 'charge_clientele', 'community_manager'].includes(me.role) ? { title: me.role === 'client' ? 'Votre avis' : 'Valider le travail', you: me.role === 'client' ? 'Ouvrez la version, puis validez ou demandez une modification.' : 'Ouvrez la version (montrez-la au client si besoin), puis validez ou demandez une modification avec une note.', then: 'validé, le contenu part en publication ; sinon, il revient au créateur avec la note.' }
         : { tone: 'wait', title: 'Chez le client', you: 'Le client (ou son chargé de clientèle) valide ou demande une modification.' };
     case 'validee':
       return me.role === 'community_manager' ? { title: 'Publier', you: 'Programmez ou publiez le contenu, puis cliquez « Marquer comme publiée ».', then: 'quand tout le mois est validé et publié, le dossier passe « Livré ».' }
@@ -100,7 +100,7 @@ export default function TaskModal({ id, onClose, onDone }: { id: number; onClose
         </div>
       )}
 
-      {['charge_clientele', 'client'].includes(me.role) && t.status === 'validation_client' && (
+      {['charge_clientele', 'community_manager', 'client'].includes(me.role) && t.status === 'validation_client' && (
         <div className="card">
           <h2>Validation {me.role === 'client' ? 'de votre contenu' : 'client'}</h2>
           <label className="field"><span>Note (obligatoire pour une modification)</span><textarea className="textarea" value={note} onChange={(e) => setNote(e.target.value)} /></label>

@@ -40,7 +40,7 @@ const myDossiers: NavItem = { ...dossiers, label: 'Mes dossiers' };
 
 export const NAV: Record<string, NavItem[]> = {
   admin: [dash, univers, reporting, deals, cal, dossiers, clients, tasks, validation, gdTeam, sav, orders, carts, leads, team, usersNav, site],
-  responsable_commercial: [dash, univers, reporting, deals, cal, carts, leads, sav, orders, team],
+  responsable_commercial: [dash, univers, reporting, deals, cal, carts, leads, dossiers, sav, orders, team],
   commercial_sedentaire: [dash, leads, univers, reporting, deals, cal, carts, sav, orders, team],
   commercial_terrain: [dash, univers, reporting, deals, cal, carts, team],
   responsable_communication: [dash, dossiers, clients, tasks, validation, gdTeam, sav, team],
@@ -50,7 +50,7 @@ export const NAV: Record<string, NavItem[]> = {
   photographe: [dash, { ...tasks, label: 'Mes tâches' }, myDossiers, { ...clients, label: 'Mes clients' }, myStats, team],
   developpeur: [dash, { ...tasks, label: 'Mes tâches' }, myDossiers, { ...clients, label: 'Mes clients' }, sav, team],
   media_buyer: [dash, { ...tasks, label: 'Mes tâches' }, myDossiers, { ...clients, label: 'Mes clients' }, team],
-  community_manager: [dash, { ...validation, label: 'À publier' }, dossiers, { ...clients, label: 'Mes clients' }, team],
+  community_manager: [dash, { ...validation, label: 'À valider et publier' }, dossiers, { ...clients, label: 'Mes clients' }, team],
   recouvrement: [dash, { ...dossiers, label: 'Dossiers à encaisser' }, orders, sav, team],
 };
 

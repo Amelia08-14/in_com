@@ -541,6 +541,12 @@ router.get('/dashboard', wrap(async (req, res) => {
   }
   if (u.role === 'recouvrement') {
     add('Dossiers à encaisser', await count("SELECT COUNT(*) n FROM dossiers WHERE status='signe' AND offer_id IS NOT NULL"), 'confirmez le paiement : la production démarre', 'warn');
+    // Reste des contrats en cours (mensualités, reste après acompte)
+    const rest = await count(`SELECT COALESCE(SUM(GREATEST(0, COALESCE(o.price_month,0) * COALESCE(d.engagement_months,1)
+        + COALESCE((SELECT SUM(i.total) FROM dossier_items i WHERE i.dossier_id=d.id),0)
+        - COALESCE((SELECT SUM(dp.amount) FROM dossier_payments dp WHERE dp.dossier_id=d.id),0))),0) n
+      FROM dossiers d LEFT JOIN offers o ON o.id=d.offer_id WHERE d.status<>'signe'`);
+    add('Reste à encaisser', rest.toLocaleString('fr-FR') + ' DA', 'mensualités et soldes après acompte', rest ? 'accent' : null);
     add('Commandes à encaisser', await count("SELECT COUNT(*) n FROM orders WHERE status='recouvrement'"), null, 'accent');
     add('Montant à encaisser', (await count("SELECT COALESCE(SUM(price),0) n FROM orders WHERE status='recouvrement'")).toLocaleString('fr-FR') + ' DA');
     add('Encaissées ce mois', await count("SELECT COUNT(*) n FROM orders WHERE status='payee' AND DATE_FORMAT(created_at,'%Y-%m')=DATE_FORMAT(CURDATE(),'%Y-%m')"));

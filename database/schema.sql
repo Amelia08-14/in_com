@@ -3,7 +3,7 @@
 SET NAMES utf8mb4;
 SET FOREIGN_KEY_CHECKS = 0;
 
-DROP TABLE IF EXISTS dossier_items, cart_events, cart_items, carts, notifications, contact_requests, orders, services, tickets,
+DROP TABLE IF EXISTS dossier_payments, dossier_items, cart_events, cart_items, carts, notifications, contact_requests, orders, services, tickets,
   task_history, task_versions, tasks, client_assignments, dossier_history, dossiers,
   deal_history, deals, reports, prospects, offers, user_sectors, sectors, users;
 
@@ -168,6 +168,7 @@ CREATE TABLE dossiers (
   status ENUM('signe','paiement_confirme','creation_en_cours','en_attente_validation','modification_demandee','livre','publie') NOT NULL DEFAULT 'signe',
   payment_mode ENUM('bureau','terrain','virement') DEFAULT 'bureau',
   payment_status ENUM('en_attente','paye','non_paye') NOT NULL DEFAULT 'en_attente',
+  payment_plan VARCHAR(10) NULL,           -- complet, mensuel, acompte
   amount INT DEFAULT 0,
   engagement_months TINYINT NULL,          -- période d'engagement de la formule signée
   payment_confirmed_at DATETIME NULL,
@@ -192,6 +193,20 @@ CREATE TABLE dossier_items (
   total INT NOT NULL DEFAULT 0,
   FOREIGN KEY (dossier_id) REFERENCES dossiers(id) ON DELETE CASCADE,
   FOREIGN KEY (service_id) REFERENCES services(id) ON DELETE SET NULL
+);
+
+-- Encaissements d'un dossier (paiement complet, mensualités, acompte puis reste)
+CREATE TABLE dossier_payments (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  dossier_id INT NOT NULL,
+  amount INT NOT NULL,
+  mode VARCHAR(10) NULL,
+  note VARCHAR(255) NULL,
+  paid_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  created_by INT NULL,
+  INDEX (dossier_id),
+  FOREIGN KEY (dossier_id) REFERENCES dossiers(id) ON DELETE CASCADE,
+  FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
 );
 
 CREATE TABLE dossier_history (

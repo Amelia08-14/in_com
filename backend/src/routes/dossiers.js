@@ -22,6 +22,15 @@ async function getDossier(id) {
 
 // Le recouvrement voit tous les dossiers : c'est lui qui encaisse et confirme les paiements
 const FULL_ACCESS = ['admin', 'responsable_communication', 'responsable_commercial', 'responsable_technique', 'recouvrement'];
+// Qui corrige un dossier (formule, paiement, étape) et qui enregistre les encaissements
+const EDITORS = ['responsable_communication', 'responsable_commercial', 'responsable_technique'];
+const CASHIERS = ['recouvrement', 'responsable_communication', 'responsable_commercial'];
+// Montant du contrat : mensualité × engagement + services ponctuels ; encaissé : somme des encaissements
+const MONEY = `
+  (COALESCE(o.price_month, 0) * COALESCE(d.engagement_months, 1) + COALESCE((SELECT SUM(i.total) FROM dossier_items i WHERE i.dossier_id=d.id), 0)) AS contract_total,
+  COALESCE((SELECT SUM(dp.amount) FROM dossier_payments dp WHERE dp.dossier_id=d.id), 0) AS paid_total`;
+// MySQL renvoie les sommes en texte : on les remet en nombres
+const money = (r) => r && Object.assign(r, { contract_total: Number(r.contract_total) || 0, paid_total: Number(r.paid_total) || 0 });
 
 router.get('/', wrap(async (req, res) => {
   const u = req.user;
@@ -35,10 +44,10 @@ router.get('/', wrap(async (req, res) => {
   }
   if (req.query.status) { where.push('d.status=?'); params.push(req.query.status); }
   res.json(await q(
-    `SELECT d.*, p.name AS client_name, p.phone AS client_phone, o.name AS offer, s.name AS signed_by_name, c.name AS cc_name
+    `SELECT d.*, p.name AS client_name, p.phone AS client_phone, o.name AS offer, s.name AS signed_by_name, c.name AS cc_name, ${MONEY}
      FROM dossiers d JOIN prospects p ON p.id=d.prospect_id LEFT JOIN offers o ON o.id=d.offer_id
      LEFT JOIN users s ON s.id=d.signed_by LEFT JOIN users c ON c.id=d.cc_id
-     WHERE ${where.join(' AND ')} ORDER BY d.updated_at DESC`, params));
+     WHERE ${where.join(' AND ')} ORDER BY d.updated_at DESC`, params).then((rows) => rows.map(money)));
 }));
 
 router.get('/:id', wrap(async (req, res) => {
@@ -49,7 +58,7 @@ router.get('/:id', wrap(async (req, res) => {
   if (u.role !== 'client' && !FULL_ACCESS.includes(u.role) && d.signed_by !== u.id && d.cc_id !== u.id && !team.some((t) => t.id === u.id)) {
     throw new HttpError(403, 'Dossier non attribué');
   }
-  const history = await q('SELECT h.*, u.name AS user_name FROM dossier_history h LEFT JOIN users u ON u.id=h.user_id WHERE dossier_id=? ORDER BY h.created_at DESC', [d.id]);
+  const history = await q('SELECT h.*, u.name AS user_name FROM dossier_history h LEFT JOIN users u ON u.id=h.user_id WHERE dossier_id=? ORDER BY h.created_at DESC, h.id DESC', [d.id]);
   const offer = d.offer_id ? await one('SELECT id, name, price_month, posts_month, stories_month, reels_month, custom_dossier_id FROM offers WHERE id=?', [d.offer_id]) : null;
   const items = await q('SELECT id, service_id, label, quantity, unit_price, total FROM dossier_items WHERE dossier_id=? ORDER BY id', [d.id]);
   // Avancement du mois (abonnement) ou du projet : de quoi dire à chacun où en est la production
@@ -69,13 +78,15 @@ router.get('/:id', wrap(async (req, res) => {
     `SELECT t.id, t.type, t.theme, t.brief, t.status, t.due_date, u.name AS assigned_name FROM tasks t JOIN users u ON u.id=t.assigned_to
      WHERE t.prospect_id=? ORDER BY t.due_date DESC, t.id DESC LIMIT 50`, [d.prospect_id]);
   const carts = u.role === 'client' ? [] : await q('SELECT id, code, status FROM carts WHERE dossier_id=?', [d.id]);
-  res.json({ ...d, offer, items, history, team, client, tasks, carts, progress: { ...progress, quota, monthly } });
+  const totals = money(await one(`SELECT ${MONEY} FROM dossiers d LEFT JOIN offers o ON o.id=d.offer_id WHERE d.id=?`, [d.id]));
+  const payments = await q('SELECT dp.*, u.name AS user_name FROM dossier_payments dp LEFT JOIN users u ON u.id=dp.created_by WHERE dp.dossier_id=? ORDER BY dp.paid_at, dp.id', [d.id]);
+  res.json({ ...d, ...totals, payments, offer, items, history, team, client, tasks, carts, progress: { ...progress, quota, monthly } });
 }));
 
 // Correction d'un dossier (direction, responsable communication) : formule, montant, paiement,
 // prestation et statut, y compris retour à une étape précédente. Chaque changement de statut est historisé.
 const STATUSES = ['signe', 'creation_en_cours', 'livre'];
-router.patch('/:id', allow('responsable_communication'), wrap(async (req, res) => {
+router.patch('/:id', allow(...EDITORS), wrap(async (req, res) => {
   const d = await getDossier(req.params.id);
   const b = req.body || {};
   const f = {};
@@ -132,6 +143,8 @@ router.patch('/:id', allow('responsable_communication'), wrap(async (req, res) =
     if (f.payment_status === 'paye' && ['signe', 'paiement_confirme'].includes(status)) {
       launch = await launchProduction(d.id, req.user.id);
     }
+    // Paiement marqué par erreur : annulé, le dossier revient « à encaisser » et la production s'arrête
+    if (d.payment_status === 'paye' && f.payment_status !== 'paye') await cancelPayment(d, req.user.id, f.status);
   }
   // Formule choisie ou changée sur un dossier déjà en production : l'équipe manquante est attribuée
   // et les tâches du jour sont créées tout de suite (sans attendre le lendemain)
@@ -157,6 +170,46 @@ router.put('/:id/drive', allow('responsable_technique'), wrap(async (req, res) =
   res.json({ ok: true, drive_url: url || null });
 }));
 
+// Annulation d'un paiement enregistré par erreur : encaissements supprimés, retour à « Signé · à encaisser »
+// (sauf étape choisie dans la même correction), tâches générées pas encore commencées supprimées, devis remis à « paiement attendu ».
+async function cancelPayment(d, userId, chosenStatus) {
+  const removed = await one('SELECT COALESCE(SUM(amount),0) n FROM dossier_payments WHERE dossier_id=?', [d.id]);
+  await q('DELETE FROM dossier_payments WHERE dossier_id=?', [d.id]);
+  await q('UPDATE dossiers SET payment_confirmed_at=NULL, payment_plan=NULL WHERE id=?', [d.id]);
+  if (!chosenStatus && d.status !== 'signe') {
+    await q("UPDATE dossiers SET status='signe' WHERE id=?", [d.id]);
+  }
+  const t = await q("DELETE FROM tasks WHERE dossier_id=? AND status='a_faire' AND part='creation'", [d.id]);
+  await q("UPDATE carts SET status='confirmee' WHERE dossier_id=? AND status IN ('en_production','livree')", [d.id]);
+  await log(d.id, userId, chosenStatus || 'signe',
+    `Paiement annulé (erreur) : ${Number(removed.n).toLocaleString('fr-FR')} DA retirés des encaissements, ${t.affectedRows} tâche(s) non commencée(s) supprimée(s)`);
+}
+
+// Encaissement suivant (mensualité, reste après acompte), ou suppression d'un encaissement saisi par erreur
+router.post('/:id/payments', allow(...CASHIERS), wrap(async (req, res) => {
+  const d = await getDossier(req.params.id);
+  if (d.status === 'signe') throw new HttpError(400, 'Confirmez d’abord le premier paiement');
+  const amount = Math.max(0, parseInt(req.body.amount, 10) || 0);
+  if (!amount) throw new HttpError(400, 'Indiquez le montant encaissé');
+  const mode = ['bureau', 'terrain', 'virement'].includes(req.body.mode) ? req.body.mode : d.payment_mode;
+  await q('INSERT INTO dossier_payments (dossier_id, amount, mode, note, created_by) VALUES (?,?,?,?,?)',
+    [d.id, amount, mode, String(req.body.note || '').slice(0, 255) || null, req.user.id]);
+  await log(d.id, req.user.id, d.status, `Encaissement de ${amount.toLocaleString('fr-FR')} DA`);
+  const m = money(await one(`SELECT ${MONEY} FROM dossiers d LEFT JOIN offers o ON o.id=d.offer_id WHERE d.id=?`, [d.id]));
+  const rest = Math.max(0, m.contract_total - m.paid_total);
+  if (d.signed_by) await notify(d.signed_by, `Encaissement de ${amount.toLocaleString('fr-FR')} DA pour ${d.client_name}${rest ? ` · reste ${rest.toLocaleString('fr-FR')} DA` : ' · contrat soldé'}.`, '/dashboard/dossiers');
+  res.json({ ok: true, rest });
+}));
+
+router.delete('/:id/payments/:pid', allow(...CASHIERS), wrap(async (req, res) => {
+  const p = await one('SELECT * FROM dossier_payments WHERE id=? AND dossier_id=?', [req.params.pid, req.params.id]);
+  if (!p) throw new HttpError(404, 'Encaissement introuvable');
+  await q('DELETE FROM dossier_payments WHERE id=?', [p.id]);
+  const d = await getDossier(req.params.id);
+  await log(d.id, req.user.id, d.status, `Encaissement de ${p.amount.toLocaleString('fr-FR')} DA supprimé (erreur de saisie)`);
+  res.json({ ok: true });
+}));
+
 router.delete('/:id', allow(), wrap(async (req, res) => {
   await q('DELETE FROM dossiers WHERE id=?', [req.params.id]);
   res.json({ ok: true });
@@ -164,14 +217,22 @@ router.delete('/:id', allow(), wrap(async (req, res) => {
 
 // Paiement : un seul geste « Confirmer le paiement » (recouvrement, responsable communication, direction).
 // La production démarre aussitôt : équipe attribuée selon la charge, tâches réparties selon la formule.
-router.post('/:id/confirm-payment', allow('responsable_communication', 'recouvrement'), wrap(async (req, res) => {
+router.post('/:id/confirm-payment', allow(...CASHIERS), wrap(async (req, res) => {
   const d = await getDossier(req.params.id);
   if (!d.offer_id) throw new HttpError(400, 'Le responsable communication doit d’abord définir la formule du client (pack ou formule sur mesure)');
   if (d.status !== 'signe') throw new HttpError(400, 'Le paiement de ce dossier est déjà confirmé');
-  const amount = req.body.amount !== undefined && req.body.amount !== '' ? Math.max(0, parseInt(req.body.amount, 10) || 0) : null;
+  // Plan de paiement : complet (tout le contrat), mensuel (une mensualité) ou acompte (montant libre, le reste plus tard)
+  const plan = ['complet', 'mensuel', 'acompte'].includes(req.body.plan) ? req.body.plan : 'complet';
+  const m = money(await one(`SELECT ${MONEY}, o.price_month FROM dossiers d LEFT JOIN offers o ON o.id=d.offer_id WHERE d.id=?`, [d.id]));
+  const typed = req.body.amount !== undefined && req.body.amount !== '' ? Math.max(0, parseInt(req.body.amount, 10) || 0) : null;
+  const amount = typed ?? (plan === 'mensuel' ? m.price_month : m.contract_total);
+  if (!amount) throw new HttpError(400, 'Indiquez le montant encaissé');
   const mode = ['bureau', 'terrain', 'virement'].includes(req.body.payment_mode) ? req.body.payment_mode : null;
-  await q("UPDATE dossiers SET payment_status='paye', payment_confirmed_at=NOW(), amount=COALESCE(?, amount), payment_mode=COALESCE(?, payment_mode) WHERE id=?", [amount, mode, d.id]);
-  await log(d.id, req.user.id, 'paiement_confirme', req.body.note || 'Paiement reçu');
+  await q("UPDATE dossiers SET payment_status='paye', payment_plan=?, payment_confirmed_at=NOW(), payment_mode=COALESCE(?, payment_mode) WHERE id=?", [plan, mode, d.id]);
+  await q('INSERT INTO dossier_payments (dossier_id, amount, mode, note, created_by) VALUES (?,?,?,?,?)',
+    [d.id, amount, mode || d.payment_mode, { complet: 'Paiement complet', mensuel: '1re mensualité', acompte: 'Acompte' }[plan], req.user.id]);
+  const rest = Math.max(0, m.contract_total - amount);
+  await log(d.id, req.user.id, 'paiement_confirme', `${{ complet: 'Paiement complet', mensuel: '1re mensualité', acompte: 'Acompte' }[plan]} : ${amount.toLocaleString('fr-FR')} DA${rest ? ` · reste ${rest.toLocaleString('fr-FR')} DA` : ''}`);
   const launch = await launchProduction(d.id, req.user.id);
   res.json({ ok: true, launch });
 }));

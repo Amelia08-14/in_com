@@ -72,7 +72,7 @@ function EditDossier({ d, onDone }: { d: any; onDone: () => void }) {
   const toast = useToast();
   const { data: offers } = useData<any[]>('/offers');
   const isCustom = !!d.offer?.custom_dossier_id;
-  const [f, setF] = useState<any>({ offer_id: isCustom ? 'custom' : (d.offer_id || ''), amount: d.amount || 0, engagement_months: d.engagement_months || '', payment_mode: d.payment_mode || 'bureau', service_type: d.service_type, status: d.status, note: '' });
+  const [f, setF] = useState<any>({ offer_id: isCustom ? 'custom' : (d.offer_id || ''), amount: d.amount || 0, engagement_months: d.engagement_months || '', payment_status: d.payment_status || 'en_attente', payment_mode: d.payment_mode || 'bureau', service_type: d.service_type, status: d.status, note: '' });
   const [custom, setCustom] = useState<any>({
     posts_month: isCustom ? d.offer.posts_month : 0, stories_month: isCustom ? d.offer.stories_month : 0, reels_month: isCustom ? d.offer.reels_month : 0,
     price_month: isCustom ? d.offer.price_month : 0,
@@ -94,7 +94,12 @@ function EditDossier({ d, onDone }: { d: any; onDone: () => void }) {
             <option value="custom">Formule sur mesure (services et quantités sur mesure)</option>
           </select>
         </label>
-        <label className="field"><span>Montant (DA)</span><input className="input" type="number" value={f.amount} onChange={set('amount')} /></label>
+        <label className="field"><span>Montant mensuel (DA)</span><input className="input" type="number" value={f.amount} onChange={set('amount')} /></label>
+        <label className="field"><span>Statut du paiement (correction)</span>
+          <select className="select" value={f.payment_status} onChange={set('payment_status')}>
+            <option value="paye">Payé</option><option value="en_attente">Pas encore payé (annule un paiement saisi par erreur)</option><option value="non_paye">Non payé (impayé)</option>
+          </select>
+        </label>
         <label className="field"><span>Période d’engagement</span>
           <select className="select" value={f.engagement_months} onChange={set('engagement_months')}>
             <option value="">Non précisée</option>{[1, 3, 6, 12].map((m) => <option key={m} value={m}>{m} mois</option>)}
@@ -117,6 +122,8 @@ function EditDossier({ d, onDone }: { d: any; onDone: () => void }) {
       <button className="btn btn-primary" style={{ marginTop: 14 }} onClick={async () => {
         try {
           if (!f.offer_id) { toast('Choisissez la formule : un pack ou une formule sur mesure', true); return; }
+          if (d.payment_status === 'paye' && f.payment_status !== 'paye'
+            && !confirm('Annuler le paiement ? Les encaissements sont supprimés, le dossier revient « à encaisser » et les tâches pas encore commencées sont retirées.')) return;
           const body = { ...f, ...(f.offer_id === 'custom' ? { custom, amount: Number(f.amount) || Number(custom.price_month) || 0 } : {}) };
           const r = await api(`/dossiers/${d.id}`, { method: 'PATCH', body });
           toast(r.launch ? launchText(r.launch) : 'Dossier mis à jour');
@@ -229,7 +236,7 @@ const PROD = ['graphiste', 'photographe', 'developpeur', 'media_buyer', 'communi
 // Prochaine étape du dossier, dite à la personne qui le regarde
 function dossierStep(d: any, me: any): Step {
   const role = me.role;
-  const canPay = ['responsable_communication', 'admin', 'recouvrement'].includes(role);
+  const canPay = CASHIERS.includes(role);
   const isResp = ['responsable_communication', 'admin'].includes(role);
   const signer = d.signed_by_name || 'le commercial';
   if (d.status === 'signe') {
@@ -237,7 +244,7 @@ function dossierStep(d: any, me: any): Step {
     if (!d.offer_id) return isResp
       ? { title: 'Définir la formule du client', you: 'Choisissez la formule dans « Modifier le dossier » : pack ou formule sur mesure.', then: 'le recouvrement pourra confirmer le paiement.' }
       : { tone: 'wait', title: 'Offre à définir', you: 'Le responsable communication définit l’formule sur mesure, puis le paiement est encaissé.' };
-    if (canPay) return { title: 'Confirmer le paiement', you: `Vérifiez le versement de ${fmtDA(d.amount)} et confirmez.`, then: `le chargé de clientèle et l’équipe de production sont attribués, les tâches sont créées. Le client et ${signer} sont prévenus.` };
+    if (canPay) return { title: 'Confirmer le paiement', you: `Contrat de ${fmtDA(d.contract_total)}${Number(d.engagement_months) > 1 ? ` sur ${d.engagement_months} mois : choisissez paiement complet, mensuel ou acompte, ` : ' : '}vérifiez le versement et confirmez.`, then: `le chargé de clientèle et l’équipe de production sont attribués, les tâches sont créées. Le client et ${signer} sont prévenus.` };
     return { tone: 'wait', title: 'Paiement attendu', you: 'Le recouvrement encaisse et confirme le paiement.', then: 'la production démarre toute seule et vous êtes prévenu.' };
   }
   if (d.status === 'livre') {
@@ -258,21 +265,83 @@ function dossierStep(d: any, me: any): Step {
 }
 
 // Paiement : un seul geste, par le recouvrement ou le responsable communication
+const CASHIERS = ['admin', 'recouvrement', 'responsable_communication', 'responsable_commercial'];
+const EDITORS = ['admin', 'responsable_communication', 'responsable_commercial', 'responsable_technique'];
+const PLANS: [string, string, string][] = [
+  ['complet', 'Paiement complet', 'tout le contrat est payé maintenant'],
+  ['mensuel', 'Paiement mensuel', 'une mensualité maintenant, les suivantes chaque mois'],
+  ['acompte', 'Acompte', 'une partie maintenant, le reste plus tard'],
+];
+
+// Premier paiement : complet, mensuel ou acompte. Le montant proposé suit le plan choisi.
 function PaymentCard({ d, onDone }: { d: any; onDone: () => void }) {
   const toast = useToast();
-  const [amount, setAmount] = useState(d.amount || 0);
+  const monthly = Number(d.offer?.price_month) || 0;
+  const total = Number(d.contract_total) || 0;
+  const long = (Number(d.engagement_months) || 1) > 1;
+  const [plan, setPlan] = useState(long ? '' : 'complet');
+  const [amount, setAmount] = useState<any>(long ? '' : total);
   const [mode, setMode] = useState(d.payment_mode || 'bureau');
+  const pick = (p: string) => { setPlan(p); setAmount(p === 'complet' ? total : p === 'mensuel' ? monthly : ''); };
+  const rest = Math.max(0, total - (Number(amount) || 0));
   return (
     <div className="card">
+      <p className="progress-line" style={{ margin: '0 0 10px' }}>Contrat : <b>{fmtDA(total)}</b>{d.engagement_months ? ` (${d.engagement_months} mois × ${fmtDA(monthly)}${total > monthly * d.engagement_months ? ' + services' : ''})` : ''}</p>
+      {long && (
+        <div className="plan-choice" role="radiogroup" aria-label="Plan de paiement">
+          {PLANS.map(([k, l, sub]) => (
+            <button type="button" key={k} role="radio" aria-checked={plan === k} className={plan === k ? 'on' : ''} onClick={() => pick(k)}><b>{l}</b><small>{sub}</small></button>
+          ))}
+        </div>
+      )}
       <div className="grid-2">
-        <label className="field"><span>Montant encaissé (DA)</span><input className="input" type="number" min={0} value={amount} onChange={(e) => setAmount(e.target.value)} /></label>
+        <label className="field"><span>Montant encaissé maintenant (DA)</span><input className="input" type="number" min={0} value={amount} onChange={(e) => setAmount(e.target.value)} /></label>
         <label className="field"><span>Mode de paiement</span>
           <select className="select" value={mode} onChange={(e) => setMode(e.target.value)}><option value="bureau">Au bureau</option><option value="terrain">Sur le terrain</option><option value="virement">Virement</option></select>
         </label>
       </div>
-      <button className="btn btn-primary" style={{ marginTop: 12 }} disabled={!d.offer_id} onClick={async () => {
-        try { const r = await api(`/dossiers/${d.id}/confirm-payment`, { body: { amount, payment_mode: mode } }); toast(`Paiement confirmé · ${launchText(r.launch)}`); onDone(); } catch (e: any) { toast(e.message, true); }
+      {plan && Number(amount) > 0 && <p className="progress-line" style={{ margin: '8px 0 0' }}>{rest ? `Reste à encaisser ensuite : ${fmtDA(rest)}` : 'Le contrat sera soldé.'}</p>}
+      <button className="btn btn-primary" style={{ marginTop: 12 }} disabled={!d.offer_id || !plan || !Number(amount)} onClick={async () => {
+        try { const r = await api(`/dossiers/${d.id}/confirm-payment`, { body: { plan, amount, payment_mode: mode } }); toast(`Paiement confirmé · ${launchText(r.launch)}`); onDone(); } catch (e: any) { toast(e.message, true); }
       }}>Confirmer le paiement</button>
+    </div>
+  );
+}
+
+// Encaissements du contrat : déjà payé, reste, et ajout d'une mensualité ou du solde
+function PaymentsCard({ d, canCash, onDone }: { d: any; canCash: boolean; onDone: () => void }) {
+  const run = useAction();
+  const total = Number(d.contract_total) || 0;
+  const paid = Number(d.paid_total) || 0;
+  const rest = Math.max(0, total - paid);
+  const [amount, setAmount] = useState<any>(d.payment_plan === 'mensuel' ? Math.min(rest, Number(d.offer?.price_month) || rest) : rest);
+  const [mode, setMode] = useState(d.payment_mode || 'bureau');
+  return (
+    <div className="card">
+      <h2>Encaissements</h2>
+      <p style={{ margin: '0 0 10px', fontSize: 14 }}>
+        Contrat <b>{fmtDA(total)}</b> · encaissé <b>{fmtDA(paid)}</b> · {rest ? <>reste <b style={{ color: 'var(--danger)' }}>{fmtDA(rest)}</b></> : <span className="badge ok">Soldé</span>}
+        {d.payment_plan && <span className="sub">Plan : {PLANS.find(([k]) => k === d.payment_plan)?.[1]}</span>}
+      </p>
+      {d.payments?.length > 0 && (
+        <div className="table-wrap"><table className="t">
+          <thead><tr><th>Date</th><th>Montant</th><th>Mode</th><th>Note</th>{canCash && <th />}</tr></thead>
+          <tbody>{d.payments.map((p: any) => (
+            <tr key={p.id}><td>{fmtDate(p.paid_at, true)}</td><td><b>{fmtDA(p.amount)}</b></td><td>{p.mode || '—'}</td><td>{p.note || '—'}{p.user_name && <span className="sub">{p.user_name}</span>}</td>
+              {canCash && <td><button className="btn btn-ghost btn-xs danger-text" onClick={() => confirm(`Supprimer l’encaissement de ${fmtDA(p.amount)} (erreur de saisie) ?`) && run(() => api(`/dossiers/${d.id}/payments/${p.id}`, { method: 'DELETE' }), 'Encaissement supprimé', onDone)}>Supprimer</button></td>}
+            </tr>
+          ))}</tbody>
+        </table></div>
+      )}
+      {canCash && rest > 0 && (
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'end', marginTop: 12 }}>
+          <label className="field" style={{ flex: '1 1 160px' }}><span>Nouvel encaissement (DA)</span><input className="input" type="number" min={0} value={amount} onChange={(e) => setAmount(e.target.value)} /></label>
+          <label className="field" style={{ flex: '1 1 140px' }}><span>Mode</span>
+            <select className="select" value={mode} onChange={(e) => setMode(e.target.value)}><option value="bureau">Au bureau</option><option value="terrain">Sur le terrain</option><option value="virement">Virement</option></select>
+          </label>
+          <button className="btn btn-dark" disabled={!Number(amount)} onClick={() => run(() => api(`/dossiers/${d.id}/payments`, { body: { amount, mode } }), 'Encaissement enregistré', onDone)}>Enregistrer l’encaissement</button>
+        </div>
+      )}
     </div>
   );
 }
@@ -329,7 +398,8 @@ function DossierModal({ id, onClose, onDone }: { id: number; onClose: () => void
 
   // En cas d'erreur, le message de l'API s'affiche au lieu d'un chargement sans fin
   if (!d) return <Modal title="Dossier" onClose={onClose}>{error ? <p className="form-err">Impossible d’ouvrir le dossier : {error}</p> : <p>Chargement…</p>}</Modal>;
-  const canPay = ['responsable_communication', 'admin', 'recouvrement'].includes(me.role) && d.status === 'signe' && d.offer_id;
+  const canPay = CASHIERS.includes(me.role) && d.status === 'signe' && d.offer_id;
+  const canEdit = EDITORS.includes(me.role);
   const canTask = ['admin', 'responsable_communication', 'responsable_technique'].includes(me.role);
   // Le lien Drive est renseigné par la direction ou le responsable technique uniquement
   const canDrive = ['admin', 'responsable_technique'].includes(me.role);
@@ -342,7 +412,8 @@ function DossierModal({ id, onClose, onDone }: { id: number; onClose: () => void
     <Modal title={d.title} onClose={onClose} wide>
       <Flow status={d.status} />
       <NextStep step={dossierStep(d, me)} />
-      {canPay && <PaymentCard d={d} onDone={done} key={d.amount} />}
+      {canPay && <PaymentCard d={d} onDone={done} key={`${d.contract_total}-${d.engagement_months}`} />}
+      {d.status !== 'signe' && me.role !== 'client' && <PaymentsCard d={d} canCash={CASHIERS.includes(me.role)} onDone={done} key={`${d.paid_total}-${d.contract_total}`} />}
       <dl className="kv">
         <dt>Client</dt><dd>{d.client_name}</dd>
         <dt>Prestation</dt><dd>{SERVICE_TYPE[d.service_type]}</dd>
@@ -351,7 +422,7 @@ function DossierModal({ id, onClose, onDone }: { id: number; onClose: () => void
           {d.offer.custom_dossier_id && <span className="sub">{[d.offer.posts_month && `${d.offer.posts_month} posts`, d.offer.stories_month && `${d.offer.stories_month} stories`, d.offer.reels_month && `${d.offer.reels_month} reels`].filter(Boolean).join(', ') || 'Sans quota mensuel'}</span>}
           {d.items?.length > 0 && <span className="sub">{d.items.map((i: any) => `${i.quantity} × ${i.label}`).join(' · ')} · {fmtDA(d.items.reduce((sum: number, i: any) => sum + i.total, 0))} ponctuel</span>}
         </> : <span className="badge danger">Formule à choisir</span>}</dd>
-        <dt>Montant</dt><dd>{fmtDA(d.amount)} · paiement {d.payment_mode} · <Badge map={PAYMENT_STATUS} value={d.payment_status || 'en_attente'} /></dd>
+        <dt>Paiement</dt><dd>Contrat {fmtDA(d.contract_total)} · encaissé {fmtDA(d.paid_total)}{Number(d.contract_total) > Number(d.paid_total) ? ` · reste ${fmtDA(Number(d.contract_total) - Number(d.paid_total))}` : ''} · <Badge map={PAYMENT_STATUS} value={d.payment_status || 'en_attente'} /></dd>
         <dt>Engagement</dt><dd>{d.engagement_months ? <>{d.engagement_months} mois{d.payment_confirmed_at && <> · jusqu’au {fmtDate(engagementEnd(d))}</>}</> : <span className="badge warn">À préciser</span>}</dd>
         <dt>Paiement confirmé</dt><dd>{fmtDate(d.payment_confirmed_at, true)}</dd>
         <dt>Équipe</dt><dd>{d.team.length ? d.team.map((t: any) => `${t.name} (${ROLE_LABELS[t.role] || t.role})`).join(', ') : '—'}</dd>
@@ -360,7 +431,7 @@ function DossierModal({ id, onClose, onDone }: { id: number; onClose: () => void
       </dl>
       {d.client && <ClientCard c={d.client} />}
       {d.client && <DriveCard d={d} canEdit={canDrive} onDone={done} key={d.client.drive_url || 'none'} />}
-      {isResp && <EditDossier d={d} onDone={done} key={`${d.status}-${d.payment_status}-${d.offer_id}`} />}
+      {canEdit && <EditDossier d={d} onDone={done} key={`${d.status}-${d.payment_status}-${d.offer_id}`} />}
 
       {isResp && d.status !== 'signe' && (
         <TeamForm d={d} staff={staff || []} onDone={done} key={`${d.cc_id}-${d.team.map((t: any) => `${t.role}:${t.id}`).join(',')}`} />
@@ -412,7 +483,7 @@ export default function Dossiers() {
                   <td><b>{d.client_name}</b><span className="sub">{SERVICE_TYPE[d.service_type]}</span></td>
                   <td><Badge map={DOSSIER_STATUS} value={d.status} /></td>
                   <td>{d.offer || '—'}<span className="sub">{fmtDA(d.amount)}</span></td>
-                  <td><Badge map={PAYMENT_STATUS} value={d.payment_status || 'en_attente'} /></td>
+                  <td><Badge map={PAYMENT_STATUS} value={d.payment_status || 'en_attente'} />{d.status !== 'signe' && Number(d.contract_total) > Number(d.paid_total) && <span className="sub">reste {fmtDA(Number(d.contract_total) - Number(d.paid_total))}</span>}</td>
                   <td>{d.signed_by_name || '—'}</td>
                   <td>{d.cc_name || <span className="badge warn">À attribuer</span>}</td>
                   <td>{fmtDate(d.updated_at)}</td>

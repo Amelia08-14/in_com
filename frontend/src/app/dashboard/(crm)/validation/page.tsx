@@ -13,7 +13,7 @@ const COLUMNS: Record<string, string[]> = {
   admin: ['validation_technique', 'validation_client', 'modification_demandee', 'validee'],
   charge_clientele: ['validation_client', 'validee'],
   client: ['validation_client', 'validee', 'publiee'],
-  community_manager: ['validee', 'publiee'],
+  community_manager: ['validation_client', 'validee', 'publiee'],
   graphiste: ['validation_technique', 'validation_client', 'modification_demandee', 'validee'],
 };
 
@@ -21,7 +21,7 @@ const SUB: Record<string, string> = {
   responsable_technique: 'Validez en interne chaque conception. On ne valide jamais sa propre conception.',
   charge_clientele: 'Présentez les conceptions validées en interne, validez ou demandez une modification avec une note.',
   client: 'Validez vos contenus ou demandez une modification. Votre chargé de clientèle reste votre interlocuteur.',
-  community_manager: 'Contenus validés par le client, prêts à être programmés et publiés.',
+  community_manager: 'Validez le travail des graphistes (à la place du chargé de clientèle), puis publiez les contenus validés.',
   graphiste: 'Le statut de chacune de vos conceptions et les notes de modification.',
 };
 
@@ -31,7 +31,7 @@ export default function Validation() {
   const { data: rows, reload } = useData<any[]>(`/tasks${scope}`);
   const [open, setOpen] = useState<number | null>(null);
   const cols = COLUMNS[me.role] || COLUMNS.admin;
-  const title = me.role === 'community_manager' ? 'À publier' : me.role === 'client' ? 'À valider' : me.role === 'graphiste' ? 'Suivi de validation' : 'Validation';
+  const title = me.role === 'community_manager' ? 'À valider et publier' : me.role === 'client' ? 'À valider' : me.role === 'graphiste' ? 'Suivi de validation' : 'Validation';
 
   return (
     <>

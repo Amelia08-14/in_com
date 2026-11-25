@@ -131,6 +131,8 @@ async function launchProduction(dossierId, byUserId) {
   if (d.client_user_id) {
     await notify(d.client_user_id, `Paiement reçu : la production de votre projet démarre. Vous validerez chaque contenu dans « À valider »${d.drive_url ? ' ; déposez vos références dans votre dossier partagé' : ''}.`, '/espace-client/projets');
   }
+  const hasCm = team.some((t) => t.role === 'community_manager') || added.some((a) => a.role === 'community_manager');
+  if (hasCm) missing.splice(0, missing.length, ...missing.filter((r) => r !== ROLE_NAME.charge_clientele));
   if (missing.length) {
     await notifyRole(['responsable_communication', 'admin'], `Production de ${d.client_name} : aucun ${missing.join(', ')} disponible, attribuez-le dans le dossier`, '/dashboard/dossiers');
   }
@@ -172,7 +174,8 @@ router.get('/', wrap(async (req, res) => {
   const where = ['1=1'];
   const params = [];
   if (u.role === 'community_manager') {
-    where.push("t.status IN ('validee','publiee') AND EXISTS (SELECT 1 FROM client_assignments ca WHERE ca.prospect_id=t.prospect_id AND ca.user_id=?)"); params.push(u.id);
+    // Le community manager valide aussi pour le client quand il n'y a pas de chargé de clientèle
+    where.push("t.status IN ('validation_client','validee','publiee') AND EXISTS (SELECT 1 FROM client_assignments ca WHERE ca.prospect_id=t.prospect_id AND ca.user_id=?)"); params.push(u.id);
   } else if (PROD_ROLES.includes(u.role)) {
     where.push('t.assigned_to=?'); params.push(u.id);
     if (scope !== 'all') { where.push('(t.due_date<=CURDATE() AND t.status IN (?))'); params.push(OPEN); }
@@ -283,7 +286,13 @@ router.post('/:id/tech-review', allow('responsable_technique'), wrap(async (req,
     await q("UPDATE tasks SET status='validation_client' WHERE id=?", [t.id]);
     await log(t.id, req.user.id, 'validation_technique', 'validation_client', req.body.note);
     const ccs = await q("SELECT user_id FROM client_assignments WHERE prospect_id=? AND role='charge_clientele'", [t.prospect_id]);
-    await notify(ccs.map((c) => c.user_id), `À faire valider par le client : ${t.theme || t.client_name}. Relancez-le s'il n'a pas répondu sous 48 h.`, '/dashboard/validation');
+    if (ccs.length) {
+      await notify(ccs.map((c) => c.user_id), `À faire valider par le client : ${t.theme || t.client_name}. Relancez-le s'il n'a pas répondu sous 48 h.`, '/dashboard/validation');
+    } else {
+      // Pas de chargé de clientèle : le community manager du client valide (ou fait valider) le travail
+      const cms = await q("SELECT user_id FROM client_assignments WHERE prospect_id=? AND role='community_manager'", [t.prospect_id]);
+      await notify(cms.map((c) => c.user_id), `À valider : ${t.theme || t.client_name}, validé en interne. Validez-le (ou demandez une modification), puis publiez-le.`, '/dashboard/validation');
+    }
     if (t.client_user_id) await notify(t.client_user_id, 'Un contenu vous attend : validez-le ou demandez une modification dans « À valider ».', '/espace-client/a-valider');
   } else {
     await sendToModification(t, req.user.id, req.body.note, 'technique');
@@ -292,7 +301,7 @@ router.post('/:id/tech-review', allow('responsable_technique'), wrap(async (req,
 }));
 
 // CC ou client : validation finale
-router.post('/:id/client-review', allow('charge_clientele', 'client'), wrap(async (req, res) => {
+router.post('/:id/client-review', allow('charge_clientele', 'community_manager', 'client'), wrap(async (req, res) => {
   const t = await getTask(req.params.id);
   if (t.status !== 'validation_client') throw new HttpError(400, 'Pas en validation client');
   if (req.user.role === 'client' && t.client_user_id !== req.user.id) throw new HttpError(403, 'Accès refusé');
@@ -304,7 +313,7 @@ router.post('/:id/client-review', allow('charge_clientele', 'client'), wrap(asyn
     if (t.type !== 'dev') await notify(cms.map((c) => c.user_id), `À publier : ${t.theme || t.client_name}, validé par le client. Publiez-le puis marquez-le publié.`, '/dashboard/validation');
     await checkDeliveryForProspect(t.prospect_id);
   } else {
-    await sendToModification(t, req.user.id, req.body.note, req.user.role === 'client' ? 'client' : 'cc');
+    await sendToModification(t, req.user.id, req.body.note, { client: 'client', community_manager: 'cm' }[req.user.role] || 'cc');
   }
   res.json({ ok: true });
 }));
