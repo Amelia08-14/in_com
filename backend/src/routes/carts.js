@@ -244,7 +244,7 @@ crm.post('/carts/:id/sign', wrap(async (req, res) => {
   if (!['recue', 'contactee', 'devis_envoye'].includes(c.status)) throw new HttpError(400, 'Ce devis est déjà signé ou clôturé');
   if (!c.prospect_id) throw new HttpError(400, 'Ce devis n’est rattaché à aucune fiche client');
   const b = req.body || {};
-  const dossierId = await signClient(c.prospect_id, req.user.id, { documents_url: b.documents_url, offer_id: b.offer_id, service_type: b.service_type, custom: b.custom, engagement_months: b.engagement_months, cartId: c.id });
+  const dossierId = await signClient(c.prospect_id, req.user.id, { documents_url: b.documents_url, offer_id: b.offer_id, service_type: b.service_type, custom: b.custom, extras: b.extras, engagement_months: b.engagement_months, cartId: c.id });
   await q("INSERT INTO reports (user_id, prospect_id, channel, reason, notes, documents_url) VALUES (?,?, 'appel', 'signe', ?, ?)",
     [req.user.id, c.prospect_id, `Devis ${c.code} signé`, b.documents_url]);
   res.json({ ok: true, dossier_id: dossierId });

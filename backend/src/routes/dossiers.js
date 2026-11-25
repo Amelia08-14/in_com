@@ -6,7 +6,7 @@ const { q, one } = require('../db');
 const { allow } = require('../auth');
 const { notify, wrap, HttpError } = require('../util');
 const { launchProduction, generateDailyTasks } = require('./tasks');
-const { saveCustomOffer } = require('../flow');
+const { saveCustomOffer, parseItems, saveItems, createServiceTask } = require('../flow');
 
 async function log(dossierId, userId, status, note = null) {
   await q('INSERT INTO dossier_history (dossier_id, user_id, status, note) VALUES (?,?,?,?)', [dossierId, userId, status, note]);
@@ -91,6 +91,7 @@ router.patch('/:id', allow(...EDITORS), wrap(async (req, res) => {
   const b = req.body || {};
   const f = {};
   let custom = null;
+  let addedItems = [];
   if (b.offer_id !== undefined) {
     // La formule est obligatoire : un pack ou une formule sur mesure
     if (!b.offer_id) throw new HttpError(400, 'Choisissez la formule : un pack ou une formule sur mesure');
@@ -105,10 +106,10 @@ router.patch('/:id', allow(...EDITORS), wrap(async (req, res) => {
     // La formule du dossier devient celle de la fiche client : c'est elle qui fixe les quotas de production
     await q('UPDATE prospects SET offer_id=? WHERE id=?', [f.offer_id, d.prospect_id]);
     if (!custom) {
-      // Retour à une formule du catalogue : la formule sur mesure de ce dossier est supprimée
-      await q('DELETE FROM dossier_items WHERE dossier_id=?', [d.id]);
+      // Pack choisi : la formule sur mesure de ce dossier est supprimée ; ses services deviennent ceux envoyés
       await q('DELETE FROM offers WHERE custom_dossier_id=? AND id<>?', [d.id, f.offer_id]);
-    }
+      if (b.items !== undefined) addedItems = await saveItems(d.id, await parseItems(b.items));
+    } else addedItems = custom.added;
   }
   if (b.amount !== undefined) f.amount = Math.max(0, parseInt(b.amount, 10) || 0);
   if (custom && !f.amount) f.amount = custom.price;
@@ -145,6 +146,10 @@ router.patch('/:id', allow(...EDITORS), wrap(async (req, res) => {
     }
     // Paiement marqué par erreur : annulé, le dossier revient « à encaisser » et la production s'arrête
     if (d.payment_status === 'paye' && f.payment_status !== 'paye') await cancelPayment(d, req.user.id, f.status);
+  }
+  // Services ajoutés alors que la production a démarré : une tâche chacun, tout de suite
+  if (['creation_en_cours', 'livre'].includes(f.status || d.status)) {
+    for (const it of addedItems) await createServiceTask({ prospectId: d.prospect_id, dossierId: d.id, label: it.label, quantity: it.quantity, byUserId: req.user.id, origin: 'Service ajouté au dossier' });
   }
   // Formule choisie ou changée sur un dossier déjà en production : l'équipe manquante est attribuée
   // et les tâches du jour sont créées tout de suite (sans attendre le lendemain)

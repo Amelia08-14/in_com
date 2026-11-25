@@ -4,16 +4,16 @@
 // La formule est un pack du catalogue ou une formule sur mesure (posts, stories, reels, services, prix).
 // Formule et documents sont obligatoires ; le dossier est créé et part au recouvrement.
 import { useData } from '@/components/ui';
-import CustomOffer, { EMPTY_CUSTOM, customReady } from '@/components/CustomOffer';
+import CustomOffer, { EMPTY_CUSTOM, ServiceLines, customReady } from '@/components/CustomOffer';
 import { fmtDA } from '@/lib/api';
 import { SERVICE_TYPE } from '@/lib/labels';
 
-export type Sign = { offer_id: string; service_type: string; engagement_months: string; documents_url: string; custom: any };
-export const EMPTY_SIGN: Sign = { offer_id: '', service_type: 'abonnement', engagement_months: '6', documents_url: '', custom: EMPTY_CUSTOM };
+export type Sign = { offer_id: string; service_type: string; engagement_months: string; documents_url: string; custom: any; extras: any[] };
+export const EMPTY_SIGN: Sign = { offer_id: '', service_type: 'abonnement', engagement_months: '6', documents_url: '', custom: EMPTY_CUSTOM, extras: [] };
 export const ENGAGEMENTS = [1, 3, 6, 12];
 export const signReady = (s: Sign) => !!s.offer_id && !!s.documents_url.trim() && (s.offer_id !== 'custom' || customReady(s.custom));
 // Corps envoyé à l'API : la formule sur mesure n'est jointe que si elle est choisie
-export const signBody = (s: Sign) => ({ offer_id: s.offer_id, service_type: s.service_type, engagement_months: s.engagement_months, documents_url: s.documents_url, ...(s.offer_id === 'custom' ? { custom: s.custom } : {}) });
+export const signBody = (s: Sign) => ({ offer_id: s.offer_id, service_type: s.service_type, engagement_months: s.engagement_months, documents_url: s.documents_url, ...(s.offer_id === 'custom' ? { custom: s.custom } : { extras: s.extras }) });
 
 export default function SignFields({ value, onChange }: { value: Sign; onChange: (s: Sign) => void }) {
   const { data: offers } = useData<any[]>('/offers');
@@ -41,6 +41,9 @@ export default function SignFields({ value, onChange }: { value: Sign; onChange:
         </label>
       </div>
       {value.offer_id === 'custom' && <CustomOffer c={value.custom} setC={(c) => onChange({ ...value, custom: c })} />}
+      {value.offer_id && value.offer_id !== 'custom' && (
+        <ServiceLines title="Services en plus du pack (facultatif)" lines={value.extras} setLines={(extras) => onChange({ ...value, extras })} />
+      )}
       <label className="field"><span>Lien Drive ou photos des documents (contrat, registre de commerce, agrément) *</span>
         <input className="input" value={value.documents_url} onChange={set('documents_url')} placeholder="https://drive.google.com/…" />
       </label>

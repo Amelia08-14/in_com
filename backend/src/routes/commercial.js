@@ -195,7 +195,7 @@ router.post('/reports', allow('commercial_sedentaire', 'commercial_terrain', 're
     effects.push('Deal bureau créé et attribué : à programmer');
   }
   if (reason === 'signe') {
-    await signClient(pid, u.id, { documents_url, offer_id: req.body.offer_id, service_type: req.body.service_type, custom: req.body.custom, engagement_months: req.body.engagement_months });
+    await signClient(pid, u.id, { documents_url, offer_id: req.body.offer_id, service_type: req.body.service_type, custom: req.body.custom, extras: req.body.extras, engagement_months: req.body.engagement_months });
     effects.push('Client signé : dossier créé. Le recouvrement confirme le paiement, puis la production démarre toute seule. Vous serez prévenu.');
   }
   res.json({ ok: true, prospect_id: pid, effects });
@@ -306,7 +306,7 @@ router.post('/deals/:id/outcome', allow(...COMMERCIAL), wrap(async (req, res) =>
   await q("INSERT INTO reports (user_id, prospect_id, channel, reason, entry_type, outcome, notes, documents_url) VALUES (?,?,?, 'issue_deal', 'deal', ?, ?, ?)",
     [req.user.id, deal.prospect_id, channel, outcome, notes || null, documents_url || null]);
   await markLeadHandled(deal.prospect_id);
-  if (outcome === 'gagne') await signClient(deal.prospect_id, req.user.id, { documents_url, offer_id: req.body.offer_id, service_type: req.body.service_type, custom: req.body.custom, engagement_months: req.body.engagement_months });
+  if (outcome === 'gagne') await signClient(deal.prospect_id, req.user.id, { documents_url, offer_id: req.body.offer_id, service_type: req.body.service_type, custom: req.body.custom, extras: req.body.extras, engagement_months: req.body.engagement_months });
   if (outcome === 'a_relancer' && deal.created_by !== req.user.id) {
     const p = await one('SELECT name FROM prospects WHERE id=?', [deal.prospect_id]);
     await notify(deal.created_by, `Deal à relancer : ${p?.name}. Rappelez le prospect et programmez une nouvelle date dans Deals.`, '/dashboard/deals');

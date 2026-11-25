@@ -64,11 +64,10 @@ async function logDossier(dossierId, userId, status, note = null) {
 // Formule sur mesure : quotas mensuels sur mesure (posts, stories, reels, prix) et services choisis avec leur nombre.
 // Elle est enregistrée comme une formule propre au dossier, jamais affichée sur le site.
 const int = (v, max = 100000000) => Math.min(max, Math.max(0, parseInt(v, 10) || 0));
-async function saveCustomOffer(d, c = {}) {
-  const posts = int(c.posts_month, 999), stories = int(c.stories_month, 999), reels = int(c.reels_month, 999);
-  const price = int(c.price_month);
+// Services choisis avec leur nombre (catalogue ou libres) : lignes propres et prix recalculés
+async function parseItems(raw) {
   const items = [];
-  for (const it of (Array.isArray(c.items) ? c.items : []).slice(0, 40)) {
+  for (const it of (Array.isArray(raw) ? raw : []).slice(0, 40)) {
     const qty = Math.max(1, int(it.quantity, 999));
     const sv = it.service_id ? await one('SELECT id, name, price FROM services WHERE id=?', [it.service_id]) : null;
     const label = String(sv?.name || it.label || '').trim().slice(0, 160);
@@ -76,6 +75,25 @@ async function saveCustomOffer(d, c = {}) {
     const unit = it.unit_price !== undefined && it.unit_price !== '' ? int(it.unit_price) : (sv?.price || 0);
     items.push({ service_id: sv?.id || null, label, quantity: qty, unit_price: unit, total: unit * qty });
   }
+  return items;
+}
+
+// Remplace les services du dossier ; renvoie les lignes nouvelles (pour créer leurs tâches si la production a démarré)
+async function saveItems(dossierId, items) {
+  const before = await q('SELECT label, quantity FROM dossier_items WHERE dossier_id=?', [dossierId]);
+  const pool = before.map((i) => `${i.label}|${i.quantity}`);
+  const added = items.filter((i) => { const k = pool.indexOf(`${i.label}|${i.quantity}`); if (k >= 0) { pool.splice(k, 1); return false; } return true; });
+  await q('DELETE FROM dossier_items WHERE dossier_id=?', [dossierId]);
+  for (const i of items) {
+    await q('INSERT INTO dossier_items (dossier_id, service_id, label, quantity, unit_price, total) VALUES (?,?,?,?,?,?)', [dossierId, i.service_id, i.label, i.quantity, i.unit_price, i.total]);
+  }
+  return added;
+}
+
+async function saveCustomOffer(d, c = {}) {
+  const posts = int(c.posts_month, 999), stories = int(c.stories_month, 999), reels = int(c.reels_month, 999);
+  const price = int(c.price_month);
+  const items = await parseItems(c.items);
   if (!posts && !stories && !reels && !items.length) throw new HttpError(400, 'Formule sur mesure vide : indiquez des quotas mensuels ou des services');
   const features = [posts && `${posts} posts`, stories && `${stories} stories`, reels && `${reels} reels`, ...items.map((i) => `${i.quantity} × ${i.label}`)].filter(Boolean).join(' · ');
   const existing = await one('SELECT id FROM offers WHERE custom_dossier_id=?', [d.id]);
@@ -89,11 +107,8 @@ async function saveCustomOffer(d, c = {}) {
       [`perso-${d.id}-${Date.now().toString(36)}`.slice(0, 30), price, posts, stories, reels, features, d.id]);
     offerId = r.insertId;
   }
-  await q('DELETE FROM dossier_items WHERE dossier_id=?', [d.id]);
-  for (const i of items) {
-    await q('INSERT INTO dossier_items (dossier_id, service_id, label, quantity, unit_price, total) VALUES (?,?,?,?,?,?)', [d.id, i.service_id, i.label, i.quantity, i.unit_price, i.total]);
-  }
-  return { offerId, price, once: items.reduce((sum, i) => sum + i.total, 0) };
+  const added = await saveItems(d.id, items);
+  return { offerId, price, once: items.reduce((sum, i) => sum + i.total, 0), added };
 }
 
 // Une formule sur mesure a-t-elle un contenu (quotas ou services) ?
@@ -101,7 +116,7 @@ const hasCustom = (c) => !!c && (int(c.posts_month) + int(c.stories_month) + int
 
 // ───────── 2. Signature : un seul geste, depuis le reporting, un deal ou un devis ─────────
 // Exige la formule et les documents ; un dossier déjà signé et pas encore payé est réutilisé (pas de doublon).
-async function signClient(prospectId, userId, { documents_url, offer_id, service_type, custom = null, cartId = null, engagement_months = null } = {}) {
+async function signClient(prospectId, userId, { documents_url, offer_id, service_type, custom = null, extras = null, cartId = null, engagement_months = null } = {}) {
   const docs = String(documents_url || '').trim();
   if (!docs) throw new HttpError(400, 'Documents obligatoires pour un client signé (lien Drive ou photos : contrat, registre de commerce, agrément)');
   if (!offer_id) throw new HttpError(400, 'Choisissez la formule signée : un pack ou une formule sur mesure');
@@ -123,7 +138,9 @@ async function signClient(prospectId, userId, { documents_url, offer_id, service
   const services = cart ? await q("SELECT ref, label, quantity, unit_price, total FROM cart_items WHERE cart_id=? AND kind='service'", [cart.id]) : [];
   // Formule sur mesure définie dès la signature : quotas, services et prix choisis par le commercial
   const sur = !offer && hasCustom(custom);
-  const once = sur ? 0 : services.reduce((s, i) => s + i.total, 0);
+  // Pack + services en plus choisis par le commercial (en plus de ceux du devis)
+  const extraItems = offer ? await parseItems(extras) : [];
+  const once = sur ? 0 : services.reduce((s, i) => s + i.total, 0) + extraItems.reduce((s, i) => s + i.total, 0);
   const amount = (offer ? offer.price_month : 0) + once;
 
   await q("UPDATE prospects SET label='client', documents_url=?, offer_id=COALESCE(?, offer_id) WHERE id=?", [docs, offer?.id || null, prospectId]);
@@ -153,6 +170,10 @@ async function signClient(prospectId, userId, { documents_url, offer_id, service
   for (const s of sur ? [] : services) {
     await q('INSERT INTO dossier_items (dossier_id, service_id, label, quantity, unit_price, total) VALUES (?,?,?,?,?,?)',
       [dossierId, Number(s.ref) || null, s.label, s.quantity, s.unit_price, s.total]);
+  }
+  for (const i of extraItems) {
+    await q('INSERT INTO dossier_items (dossier_id, service_id, label, quantity, unit_price, total) VALUES (?,?,?,?,?,?)',
+      [dossierId, i.service_id, i.label, i.quantity, i.unit_price, i.total]);
   }
   if (cart) {
     await q("UPDATE carts SET status='confirmee', dossier_id=?, assigned_to=COALESCE(assigned_to, ?) WHERE id=?", [dossierId, userId, cart.id]);
@@ -264,6 +285,6 @@ async function checkDeliveryForProspect(prospectId) {
 }
 
 module.exports = {
-  OPEN_TASKS, SERVICE_TYPES, fmt, saveCustomOffer, hasCustom, pickCommercial, newLead, markLeadHandled, cartStep, logDossier,
+  OPEN_TASKS, SERVICE_TYPES, fmt, saveCustomOffer, hasCustom, parseItems, saveItems, pickCommercial, newLead, markLeadHandled, cartStep, logDossier,
   signClient, serviceJob, createServiceTask, reopenDossier, checkDelivery, checkDeliveryForProspect,
 };

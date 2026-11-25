@@ -6,7 +6,7 @@ import { api, fmtDA, fmtDate } from '@/lib/api';
 import { useMe } from '@/lib/me';
 import { DOSSIER_FLOW, DOSSIER_STATUS, PAYMENT_STATUS, ROLE_LABELS, SERVICE_TYPE, TASK_STATUS } from '@/lib/labels';
 import NextStep, { type Step } from '@/components/NextStep';
-import CustomOffer from '@/components/CustomOffer';
+import CustomOffer, { ServiceLines } from '@/components/CustomOffer';
 
 const PROD_ROLES = ['graphiste', 'community_manager', 'photographe', 'developpeur', 'media_buyer'];
 
@@ -73,6 +73,8 @@ function EditDossier({ d, onDone }: { d: any; onDone: () => void }) {
   const { data: offers } = useData<any[]>('/offers');
   const isCustom = !!d.offer?.custom_dossier_id;
   const [f, setF] = useState<any>({ offer_id: isCustom ? 'custom' : (d.offer_id || ''), amount: d.amount || 0, engagement_months: d.engagement_months || '', payment_status: d.payment_status || 'en_attente', payment_mode: d.payment_mode || 'bureau', service_type: d.service_type, status: d.status, note: '' });
+  // Pack : services en plus du pack (les services du dossier quand ce n'est pas une formule sur mesure)
+  const [extras, setExtras] = useState<any[]>(isCustom ? [] : (d.items || []).map((i: any) => ({ service_id: i.service_id ? String(i.service_id) : '', label: i.label, quantity: i.quantity, unit_price: i.unit_price })));
   const [custom, setCustom] = useState<any>({
     posts_month: isCustom ? d.offer.posts_month : 0, stories_month: isCustom ? d.offer.stories_month : 0, reels_month: isCustom ? d.offer.reels_month : 0,
     price_month: isCustom ? d.offer.price_month : 0,
@@ -90,8 +92,8 @@ function EditDossier({ d, onDone }: { d: any; onDone: () => void }) {
             setF({ ...f, offer_id: e.target.value, amount: o && !Number(f.amount) ? o.price_month : f.amount });
           }}>
             <option value="" disabled>Choisir la formule…</option>
-            {offers?.map((o) => <option key={o.id} value={o.id}>{o.name} · {fmtDA(o.price_month)} / mois</option>)}
-            <option value="custom">Formule sur mesure (services et quantités sur mesure)</option>
+            {offers?.map((o) => <option key={o.id} value={o.id}>Pack {o.name} · {fmtDA(o.price_month)} / mois</option>)}
+            <option value="custom">Formule sur mesure (posts, stories, reels, services et prix au choix)</option>
           </select>
         </label>
         <label className="field"><span>Montant mensuel (DA)</span><input className="input" type="number" value={f.amount} onChange={set('amount')} /></label>
@@ -116,6 +118,7 @@ function EditDossier({ d, onDone }: { d: any; onDone: () => void }) {
         </label>
       </div>
       {f.offer_id === 'custom' && <CustomOffer c={custom} setC={setCustom} />}
+      {f.offer_id && f.offer_id !== 'custom' && <div style={{ marginTop: 14 }}><ServiceLines title="Services en plus du pack" lines={extras} setLines={setExtras} /></div>}
       {f.status !== d.status && (
         <label className="field" style={{ marginTop: 12 }}><span>Raison du changement d’étape (visible dans l’historique)</span><input className="input" value={f.note} onChange={set('note')} placeholder="Ex. : retour en création, le client a envoyé un nouveau logo" /></label>
       )}
@@ -124,7 +127,7 @@ function EditDossier({ d, onDone }: { d: any; onDone: () => void }) {
           if (!f.offer_id) { toast('Choisissez la formule : un pack ou une formule sur mesure', true); return; }
           if (d.payment_status === 'paye' && f.payment_status !== 'paye'
             && !confirm('Annuler le paiement ? Les encaissements sont supprimés, le dossier revient « à encaisser » et les tâches pas encore commencées sont retirées.')) return;
-          const body = { ...f, ...(f.offer_id === 'custom' ? { custom, amount: Number(f.amount) || Number(custom.price_month) || 0 } : {}) };
+          const body = { ...f, ...(f.offer_id === 'custom' ? { custom, amount: Number(f.amount) || Number(custom.price_month) || 0 } : { items: extras }) };
           const r = await api(`/dossiers/${d.id}`, { method: 'PATCH', body });
           toast(r.launch ? launchText(r.launch) : 'Dossier mis à jour');
           onDone();
