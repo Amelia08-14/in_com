@@ -281,19 +281,24 @@ function PaymentCard({ d, onDone }: { d: any; onDone: () => void }) {
   const toast = useToast();
   const monthly = Number(d.offer?.price_month) || 0;
   const total = Number(d.contract_total) || 0;
-  const long = (Number(d.engagement_months) || 1) > 1;
-  const [plan, setPlan] = useState(long ? '' : 'complet');
-  const [amount, setAmount] = useState<any>(long ? '' : total);
+  const months = Number(d.engagement_months) || 1;
+  const [plan, setPlan] = useState('');
+  const [amount, setAmount] = useState<any>('');
   const [mode, setMode] = useState(d.payment_mode || 'bureau');
   const pick = (p: string) => { setPlan(p); setAmount(p === 'complet' ? total : p === 'mensuel' ? monthly : ''); };
   const rest = Math.max(0, total - (Number(amount) || 0));
   return (
     <div className="card">
+      <h2>Encaisser et lancer la production</h2>
+      {!d.offer_id && <p className="form-err" style={{ margin: '0 0 10px' }}>Choisissez la formule dans « Modifier le dossier » plus bas, puis cliquez « Enregistrer les modifications » : le plan de paiement s’affiche ici.</p>}
+      {!d.engagement_months && d.offer_id && <p className="progress-line" style={{ margin: '0 0 10px', color: 'var(--warn)' }}>Période d’engagement non précisée : le contrat est compté sur 1 mois. Précisez-la dans « Modifier le dossier » pour payer en plusieurs fois.</p>}
       <p className="progress-line" style={{ margin: '0 0 10px' }}>Contrat : <b>{fmtDA(total)}</b>{d.engagement_months ? ` (${d.engagement_months} mois × ${fmtDA(monthly)}${total > monthly * d.engagement_months ? ' + services' : ''})` : ''}</p>
-      {long && (
+      {d.offer_id && (
         <div className="plan-choice" role="radiogroup" aria-label="Plan de paiement">
           {PLANS.map(([k, l, sub]) => (
-            <button type="button" key={k} role="radio" aria-checked={plan === k} className={plan === k ? 'on' : ''} onClick={() => pick(k)}><b>{l}</b><small>{sub}</small></button>
+            <button type="button" key={k} role="radio" aria-checked={plan === k} className={plan === k ? 'on' : ''} onClick={() => pick(k)}>
+              <b>{l}</b><small>{k === 'complet' ? `${fmtDA(total)} maintenant` : k === 'mensuel' ? `${fmtDA(monthly)} par mois pendant ${months} mois` : sub}</small>
+            </button>
           ))}
         </div>
       )}
@@ -401,7 +406,8 @@ function DossierModal({ id, onClose, onDone }: { id: number; onClose: () => void
 
   // En cas d'erreur, le message de l'API s'affiche au lieu d'un chargement sans fin
   if (!d) return <Modal title="Dossier" onClose={onClose}>{error ? <p className="form-err">Impossible d’ouvrir le dossier : {error}</p> : <p>Chargement…</p>}</Modal>;
-  const canPay = CASHIERS.includes(me.role) && d.status === 'signe' && d.offer_id;
+  // La carte de paiement s'affiche dès « Signé », même sans formule (elle dit alors quoi faire)
+  const canPay = CASHIERS.includes(me.role) && d.status === 'signe';
   const canEdit = EDITORS.includes(me.role);
   const canTask = ['admin', 'responsable_communication', 'responsable_technique'].includes(me.role);
   // Le lien Drive est renseigné par la direction ou le responsable technique uniquement

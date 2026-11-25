@@ -338,7 +338,7 @@ export default function AdminDashboard({ data, period, setPeriod, name }: { data
         </section>}
 
         {show('team') && <section className="panel span-2">
-          <div className="panel-head"><div><h2>Équipe commerciale</h2><p>Appels et visites déclarés, dossiers signés sur la période, deals en cours.</p></div><Link href="/dashboard/reporting" className="panel-link">Reporting</Link></div>
+          <div className="panel-head"><div><h2>Équipe commerciale</h2><p>Appels et visites déclarés et dossiers signés sur la période choisie (avec le total depuis le début), deals en cours.</p></div><Link href="/dashboard/reporting" className="panel-link">Reporting</Link></div>
           {data.leaderboard.length === 0 ? <p className="muted-line">Aucun commercial actif.</p> : (
             <div className="lb">
               {data.leaderboard.map((l: any, i: number) => (
@@ -350,7 +350,7 @@ export default function AdminDashboard({ data, period, setPeriod, name }: { data
                     <div className="hbar-track"><div className="hbar-fill" style={{ width: `${(Number(l.activity) / lbMax) * 100}%`, background: C.blue }} /></div>
                     <small>{l.activity} appels et visites</small>
                   </div>
-                  <div className="lb-stat"><b>{l.signed}</b><small>signés</small></div>
+                  <div className="lb-stat" title="Signés sur la période choisie, et depuis le début"><b>{l.signed}</b><small>signés · {l.signed_total ?? l.signed} au total</small></div>
                   <div className="lb-stat"><b>{l.open_deals}</b><small>deals en cours</small></div>
                 </div>
               ))}

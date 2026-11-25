@@ -456,6 +456,7 @@ router.get('/dashboard', wrap(async (req, res) => {
       `SELECT u.id, u.name, u.role,
          (SELECT COUNT(*) FROM reports r WHERE r.user_id=u.id AND ${inP('r.created_at')}) activity,
          (SELECT COUNT(*) FROM dossiers d WHERE d.signed_by=u.id AND ${inP('d.created_at')}) signed,
+         (SELECT COUNT(*) FROM dossiers d WHERE d.signed_by=u.id) signed_total,
          (SELECT COUNT(*) FROM deals d WHERE d.assigned_to=u.id AND d.status IN ('attribue','programme','a_relancer')) open_deals
        FROM users u WHERE u.active=1 AND u.role IN ('responsable_commercial','commercial_sedentaire','commercial_terrain')
        ORDER BY signed DESC, activity DESC`);

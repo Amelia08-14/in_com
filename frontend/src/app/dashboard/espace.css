@@ -398,3 +398,10 @@ table.t td .sub { display: block; font-size: 12.5px; color: var(--muted); }
 .plan-choice button { display: grid; gap: 2px; text-align: left; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: #fff; cursor: pointer; font: inherit; }
 .plan-choice button small { color: var(--muted); font-size: 12px; }
 .plan-choice button.on { border-color: var(--navy); background: var(--info-soft); }
+
+/* Glisser-déposer dans Validation */
+.tcard[draggable="true"] { cursor: grab; }
+.tcard.dragging { opacity: .45; }
+.col.drop-ok { outline: 2px dashed var(--navy); outline-offset: -2px; }
+.col.drop-no { opacity: .55; }
+.col.drop-over { background: var(--info-soft); }
